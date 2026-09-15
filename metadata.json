@@ -1,0 +1,6 @@
+{
+  "name": "Ship Asaan Tariff Intelligence",
+  "description": "Desktop-grade Tariff Intelligence and Rate Management System with distinct Domestic/COD and International workspaces.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
