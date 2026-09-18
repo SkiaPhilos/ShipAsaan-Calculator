@@ -409,27 +409,71 @@ Customs clearance documentation fees apply as per destination country customs au
     setCurrency(data.currency || "PKR");
     setEffectiveFrom(data.effectiveFrom || new Date().toISOString().split("T")[0]);
 
+    // Helper to extract first kg rate from various aliases
+    const extractFirstKgRate = (obj: any): number | undefined => {
+      const val = obj?.firstKgRate ?? obj?.baseRate ?? obj?.firstKg ?? obj?.rate1Kg ?? obj?.flatRate ?? obj?.rate ?? obj?.price ?? obj?.amount;
+      const num = Number(val);
+      return !isNaN(num) && num > 0 ? num : undefined;
+    };
+
+    // Helper to extract additional kg rate from various aliases
+    const extractAddlKgRate = (obj: any): number | undefined => {
+      const val = obj?.additionalKgRate ?? obj?.additionalKg ?? obj?.addlKgRate ?? obj?.addKgRate ?? obj?.subsequentKgRate ?? obj?.ratePerKg ?? obj?.extraKgRate;
+      const num = Number(val);
+      return !isNaN(num) && num > 0 ? num : undefined;
+    };
+
+    // Normalize domestic destination to standard engine zones
+    const normalizeDomesticDestination = (dest: string): string => {
+      const d = (dest || "").trim().toLowerCase();
+      if (/within|local|same city|intra|same-city/i.test(d)) return "Within City";
+      if (/same prov|intra prov|short haul/i.test(d)) return "Same Province";
+      if (/diff|different|inter|metro|long haul|other prov|nationwide|all pakistan/i.test(d)) return "Different Province";
+      if (/remote|ext|extended/i.test(d)) return "Remote / Ext-area";
+      return dest || "Within City";
+    };
+
     if (data.normalizedData) {
-      if (data.normalizedData.rates) {
-        if (isDomestic) {
-          const mappedDom: DomesticRateTier[] = data.normalizedData.rates.map((r: any, idx: number) => ({
-            id: `r-dom-${idx}`,
-            origin: r.origin || "Any",
-            destination: r.destination || "Standard Zone",
-            firstKgRate: r.firstKgRate || r.flatRate || 250,
-            additionalKgRate: r.additionalKgRate || 120,
-            expectedTransitDays: "1-2 Days",
-          }));
+      const ratesList = Array.isArray(data.normalizedData.rates) ? data.normalizedData.rates : [];
+      const topFirstKg = extractFirstKgRate(data.normalizedData) ?? extractFirstKgRate(data);
+      const topAddlKg = extractAddlKgRate(data.normalizedData) ?? extractAddlKgRate(data);
+
+      if (isDomestic) {
+        if (ratesList.length > 0) {
+          const mappedDom: DomesticRateTier[] = ratesList.map((r: any, idx: number) => {
+            const first = extractFirstKgRate(r) ?? topFirstKg ?? 0;
+            const addl = extractAddlKgRate(r) ?? topAddlKg ?? Math.round(first * 0.5);
+            return {
+              id: `r-dom-${idx}`,
+              origin: r.origin || "Any",
+              destination: normalizeDomesticDestination(r.destination || r.zone || "Within City"),
+              firstKgRate: first,
+              additionalKgRate: addl,
+              expectedTransitDays: r.transitDays || r.expectedTransitDays || "1-2 Days",
+            };
+          });
           setDomRates(mappedDom);
-        } else {
-          const mappedIntl: InternationalRateTier[] = data.normalizedData.rates.map((r: any, idx: number) => {
+        } else if (topFirstKg) {
+          // Construct default 4-sector domestic tiers if single rate card provided
+          const base = topFirstKg;
+          const addl = topAddlKg || Math.round(base * 0.5);
+          setDomRates([
+            { id: "r-dom-0", origin: "Any", destination: "Within City", firstKgRate: base, additionalKgRate: addl, expectedTransitDays: "1 Day" },
+            { id: "r-dom-1", origin: "Any", destination: "Same Province", firstKgRate: Math.round(base * 1.3), additionalKgRate: Math.round(addl * 1.2), expectedTransitDays: "1-2 Days" },
+            { id: "r-dom-2", origin: "Any", destination: "Different Province", firstKgRate: Math.round(base * 1.6), additionalKgRate: Math.round(addl * 1.4), expectedTransitDays: "2-3 Days" },
+            { id: "r-dom-3", origin: "Any", destination: "Remote / Ext-area", firstKgRate: Math.round(base * 2.0), additionalKgRate: Math.round(addl * 1.8), expectedTransitDays: "3-5 Days" },
+          ]);
+        }
+      } else {
+        if (ratesList.length > 0) {
+          const mappedIntl: InternationalRateTier[] = ratesList.map((r: any, idx: number) => {
             const wFrom = Number(r.weightFrom) || 0;
             const wTo = Number(r.weightTo) || 1.0;
             const span = wTo - wFrom;
             // A 1kg slab or smaller is ALWAYS flat.
             const isPerKg = span <= 2.0 ? false : (r.pricingType === "per_kg" || (r.ratePerKg !== undefined && r.flatRate === undefined));
             const pType: "flat" | "per_kg" = isPerKg ? "per_kg" : "flat";
-            const effectiveRate = r.flatRate !== undefined ? r.flatRate : (r.ratePerKg !== undefined ? r.ratePerKg : (r.rate || 0));
+            const effectiveRate = r.flatRate !== undefined ? r.flatRate : (r.ratePerKg !== undefined ? r.ratePerKg : (r.rate ?? r.price ?? 0));
 
             return {
               id: `r-intl-${idx}`,
@@ -439,39 +483,49 @@ Customs clearance documentation fees apply as per destination country customs au
               weightFrom: wFrom,
               weightTo: wTo,
               pricingType: pType,
-              flatRate: pType === "flat" ? effectiveRate : undefined,
-              ratePerKg: pType === "per_kg" ? effectiveRate : undefined,
+              flatRate: pType === "flat" ? Number(effectiveRate) : undefined,
+              ratePerKg: pType === "per_kg" ? Number(effectiveRate) : undefined,
             };
           });
           setIntlRates(mappedIntl);
         }
       }
 
-      if (data.normalizedData.surcharges) {
+      if (data.normalizedData.surcharges && Array.isArray(data.normalizedData.surcharges)) {
         setSurcharges(
           data.normalizedData.surcharges.map((s: any, idx: number) => ({
             id: `sc-ai-${idx}`,
             name: s.name || "Surcharge",
             originalName: s.originalName || s.name || "Fee",
             type: s.type || "percentage",
-            value: s.value || 0,
+            value: Number(s.value) || 0,
             applicability: s.applicability || "base_rate",
           }))
         );
 
         // Extract fuel, cod, gst
         const fuelS = data.normalizedData.surcharges.find((s: any) => /fuel|fac|fsc/i.test(s.name));
-        if (fuelS) setFuelPercentage(fuelS.value);
+        if (fuelS) setFuelPercentage(Number(fuelS.value) || 0);
 
         const codS = data.normalizedData.surcharges.find((s: any) => /cod/i.test(s.name));
-        if (codS) setCodPercentage(codS.value);
+        if (codS) setCodPercentage(Number(codS.value) || 0);
 
         const taxS = data.normalizedData.surcharges.find((s: any) => /gst|tax|vat/i.test(s.name));
-        if (taxS) setGstPercentage(taxS.value);
+        if (taxS) setGstPercentage(Number(taxS.value) || 0);
       }
 
+      // Check top-level numeric surcharges as well
+      const topFuel = data.normalizedData.fuelPercentage ?? data.normalizedData.fuelSurchargePct ?? data.fuelPercentage;
+      if (topFuel !== undefined && !isNaN(Number(topFuel))) setFuelPercentage(Number(topFuel));
+
+      const topGst = data.normalizedData.taxRate ?? data.normalizedData.gstPct ?? data.normalizedData.gstPercentage ?? data.gstPercentage;
+      if (topGst !== undefined && !isNaN(Number(topGst))) setGstPercentage(Number(topGst));
+
+      const topCod = data.normalizedData.codPercentage ?? data.normalizedData.codPct ?? data.normalizedData.codTerms?.percentage ?? data.codPercentage;
+      if (topCod !== undefined && !isNaN(Number(topCod))) setCodPercentage(Number(topCod));
+
       if (data.normalizedData.volumetricDivisor) {
-        setVolumetricDivisor(data.normalizedData.volumetricDivisor);
+        setVolumetricDivisor(Number(data.normalizedData.volumetricDivisor));
       }
     }
 

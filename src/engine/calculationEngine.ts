@@ -87,17 +87,29 @@ export class TariffCalculationEngine {
     }
     const chargeableWeight = Math.max(input.actualWeightKg, volumetricWeight);
 
-    // Find applicable rate tier - checks zone type, city name, and province name
+    // Find applicable rate tier - checks zone type, sector synonyms, city name, and province name
     const destNorm = input.destinationCity.trim().toLowerCase();
     const origNorm = input.originCity.trim().toLowerCase();
 
-    let tier = tariff.rates.find(
-      (r) =>
-        r.destination.toLowerCase() === zoneType.toLowerCase() ||
-        r.destination.trim().toLowerCase() === destNorm ||
-        r.destination.toLowerCase().includes(destNorm) ||
-        destNorm.includes(r.destination.toLowerCase())
-    );
+    // Map zone types to common synonyms in domestic tariffs
+    const ZONE_SYNONYMS: Record<string, string[]> = {
+      "Within City": ["within city", "within-city", "local", "same city", "intra city", "intracity", "intra-city", "intra"],
+      "Same Province": ["same province", "same-province", "intra province", "intra-province", "within province", "short haul"],
+      "Different Province": ["different province", "inter province", "inter-province", "different zone", "metro", "long haul", "nationwide", "all pakistan", "other province", "intercity"],
+      "Remote / Ext-area": ["remote", "remote / ext-area", "ext-area", "extended area", "remote area", "rest of country"],
+    };
+    const activeSynonyms = ZONE_SYNONYMS[zoneType] || [zoneType.toLowerCase()];
+
+    let tier = tariff.rates.find((r) => {
+      const rDest = r.destination.trim().toLowerCase();
+      return (
+        rDest === zoneType.toLowerCase() ||
+        activeSynonyms.some((syn) => rDest === syn || rDest.includes(syn) || syn.includes(rDest)) ||
+        rDest === destNorm ||
+        rDest.includes(destNorm) ||
+        destNorm.includes(rDest)
+      );
+    });
 
     // Fallback: If no exact tier found, match any applicable rate tier
     if (!tier && tariff.rates.length > 0) {
@@ -467,9 +479,13 @@ export class TariffCalculationEngine {
     const additionalBreakdownItems: CalculationChargeDetail[] = [];
 
     // CASE 1: Standard parcel within flat slabs (e.g. weight <= 70 kg)
-    const matchedFlatTier = flatTiers.find(
-      (t) => chargeableWeight >= t.weightFrom && chargeableWeight <= t.weightTo
-    );
+    // Sort flat tiers ascending by weightTo for standard courier weight slab lookup
+    const sortedFlatTiers = [...flatTiers].sort((a, b) => a.weightTo - b.weightTo);
+
+    // Standard courier slab lookup: find first tier whose upper limit covers the chargeable weight, or matches the weight span
+    const matchedFlatTier =
+      sortedFlatTiers.find((t) => t.weightTo >= chargeableWeight - 0.001) ||
+      sortedFlatTiers.find((t) => chargeableWeight >= t.weightFrom && chargeableWeight <= t.weightTo);
 
     if (matchedFlatTier && chargeableWeight <= maxFlatThreshold) {
       baseRate = matchedFlatTier.flatRate || 0;

@@ -36,6 +36,48 @@ interface SettingsViewProps {
   onUpdateUser?: (user: AppUser) => void;
 }
 
+// Curated list of popular, latest models per provider for quick suggestions
+const PROVIDER_MODEL_PRESETS: Record<string, Array<{ id: string; label: string; badge?: string }>> = {
+  gemini: [
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", badge: "Current Flagship" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", badge: "High Speed" },
+    { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", badge: "Complex Reasoning" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", badge: "Stable GA" },
+    { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", badge: "Deep Thinking" },
+  ],
+  openai: [
+    { id: "gpt-5.4", label: "GPT-5.4", badge: "Workhorse" },
+    { id: "gpt-5.5", label: "GPT-5.5", badge: "Next-Gen" },
+    { id: "gpt-4o", label: "GPT-4o", badge: "Omni Standard" },
+    { id: "gpt-4o-mini", label: "GPT-4o Mini", badge: "Fast & Lightweight" },
+    { id: "o4-mini", label: "o4-mini", badge: "High Reasoning" },
+    { id: "o3-mini", label: "o3-mini", badge: "Math & Code" },
+  ],
+  anthropic: [
+    { id: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet", badge: "Hybrid Reasoning" },
+    { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", badge: "High Accuracy" },
+    { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet", badge: "Established Standard" },
+    { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku", badge: "Ultra Fast" },
+    { id: "claude-opus-4-1", label: "Claude Opus 4.1", badge: "Complex Analysis" },
+  ],
+  deepseek: [
+    { id: "deepseek-chat", label: "DeepSeek-V3 / V4 Chat", badge: "Flagship General" },
+    { id: "deepseek-reasoner", label: "DeepSeek-R1 Reasoner", badge: "Deep Reasoning" },
+    { id: "deepseek-v4-flash", label: "DeepSeek-V4-Flash", badge: "High Throughput" },
+  ],
+  groq: [
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile", badge: "Ultra Fast LPU" },
+    { id: "qwen-2.5-32b", label: "Qwen 2.5 32B", badge: "Multilingual" },
+    { id: "deepseek-r1-distill-llama-70b", label: "DeepSeek R1 Distill 70B", badge: "Reasoning" },
+  ],
+  openrouter: [
+    { id: "google/gemini-2.5-flash", label: "Google: Gemini 2.5 Flash", badge: "OpenRouter" },
+    { id: "anthropic/claude-3.7-sonnet", label: "Anthropic: Claude 3.7 Sonnet", badge: "OpenRouter" },
+    { id: "deepseek/deepseek-r1", label: "DeepSeek: R1", badge: "OpenRouter" },
+    { id: "openai/gpt-4o", label: "OpenAI: GPT-4o", badge: "OpenRouter" },
+  ],
+};
+
 export const SettingsView: React.FC<SettingsViewProps> = ({
   aiConfig,
   onUpdateAIConfig,
@@ -151,83 +193,53 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     null
   );
 
-  // Helper to detect model typos and provide canonical suggestions
+  // Helper to detect obvious formatting issues (like accidental spaces) and offer clean hyphenated format
   const validateModelName = (prov: string, modelName: string) => {
-    const clean = modelName.trim().toLowerCase();
-    if (!clean) return;
-
-    if (prov === "gemini") {
-      // Common misspellings or shorthand
-      if (clean === "gemini 3.6" || clean === "gemini-3.6" || clean === "gemini 3.6 flash" || clean === "gemini3.6") {
-        setModelWarning({
-          invalid: true,
-          entered: modelName,
-          suggestion: "gemini-3.6-flash",
-        });
-        return;
-      }
-      if (clean === "gemini 3.8" || clean === "gemini-3.8" || clean === "gemini 3.8 flash" || clean === "gemini3.8") {
-        setModelWarning({
-          invalid: true,
-          entered: modelName,
-          suggestion: "gemini-3.8-flash",
-        });
-        return;
-      }
-      if (clean === "gemini 2.5" || clean === "gemini-2.5" || clean === "gemini2.5") {
-        setModelWarning({
-          invalid: true,
-          entered: modelName,
-          suggestion: "gemini-2.5-flash",
-        });
-        return;
-      }
-      if (clean === "gemini flash" || clean === "flash") {
-        setModelWarning({
-          invalid: true,
-          entered: modelName,
-          suggestion: "gemini-3.8-flash",
-        });
-        return;
-      }
-      if (clean === "gemini pro" || clean === "gemini-pro" || clean === "gemini 3.1 pro") {
-        setModelWarning({
-          invalid: true,
-          entered: modelName,
-          suggestion: "gemini-3.1-pro-preview",
-        });
-        return;
-      }
-      if (clean.includes(" ") || (!clean.startsWith("gemini-") && !clean.startsWith("models/gemini-"))) {
-        setModelWarning({
-          invalid: true,
-          entered: modelName,
-          suggestion: "gemini-3.8-flash",
-        });
-        return;
-      }
-    } else if (prov === "openai") {
-      if (clean === "gpt 4" || clean === "gpt-4" || clean === "gpt4") {
-        setModelWarning({ invalid: true, entered: modelName, suggestion: "gpt-4o" });
-        return;
-      }
-      if (clean === "gpt 4o mini" || clean === "gpt-4o-mini" || clean === "gpt4o mini") {
-        setModelWarning({ invalid: true, entered: modelName, suggestion: "gpt-4o-mini" });
-        return;
-      }
-    } else if (prov === "claude" || prov === "anthropic") {
-      if (clean === "claude 3.5" || clean === "claude-3.5" || clean === "claude 3.5 sonnet") {
-        setModelWarning({ invalid: true, entered: modelName, suggestion: "claude-3-5-sonnet-20241022" });
-        return;
-      }
-    } else if (prov === "deepseek") {
-      if (clean === "deepseek" || clean === "deepseek v3" || clean === "deepseek-v3") {
-        setModelWarning({ invalid: true, entered: modelName, suggestion: "deepseek-chat" });
-        return;
-      }
+    const raw = modelName.trim();
+    if (!raw) {
+      setModelWarning(null);
+      return;
     }
 
-    // If valid
+    // Check if model contains spaces (e.g. "gemini 3.9 flash" instead of "gemini-3.9-flash")
+    if (raw.includes(" ")) {
+      const hyphenated = raw.toLowerCase().replace(/\s+/g, "-");
+      setModelWarning({
+        invalid: false,
+        entered: modelName,
+        suggestion: hyphenated,
+      });
+      return;
+    }
+
+    // Common shorthand conveniences
+    const clean = raw.toLowerCase();
+    if (prov === "gemini" && (clean === "flash" || clean === "gemini-flash")) {
+      setModelWarning({
+        invalid: false,
+        entered: modelName,
+        suggestion: "gemini-3.8-flash",
+      });
+      return;
+    }
+    if (prov === "openai" && (clean === "gpt4" || clean === "gpt-4")) {
+      setModelWarning({
+        invalid: false,
+        entered: modelName,
+        suggestion: "gpt-4o",
+      });
+      return;
+    }
+    if (prov === "deepseek" && (clean === "deepseek" || clean === "deepseek-v3")) {
+      setModelWarning({
+        invalid: false,
+        entered: modelName,
+        suggestion: "deepseek-chat",
+      });
+      return;
+    }
+
+    // Any valid model string (including future models like gemini-3.9-flash, gpt-5, etc.) is fully accepted!
     setModelWarning(null);
   };
 
@@ -584,13 +596,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 }}
                 className="w-full bg-stone-50 border border-stone-300 rounded-lg px-3 py-2 text-stone-800 font-semibold"
               >
-                <option value="gemini">Google Gemini (Recommended / Native)</option>
-                <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-                <option value="anthropic">Anthropic Claude (Sonnet / Haiku)</option>
-                <option value="deepseek">DeepSeek (Chat / V3)</option>
-                <option value="groq">Groq High-Speed (Llama 3.3)</option>
-                <option value="openrouter">OpenRouter Multi-Model</option>
-                <option value="custom">Custom / Local LLM Endpoint</option>
+                <option value="gemini">Google Gemini (Gemini 3.8 / 3.5 / 2.5)</option>
+                <option value="openai">OpenAI (GPT-5.4 / GPT-4o / o4-mini)</option>
+                <option value="anthropic">Anthropic Claude (Claude 3.7 Sonnet / 4.5 / Haiku)</option>
+                <option value="deepseek">DeepSeek (V3 / R1 / V4-Flash)</option>
+                <option value="groq">Groq (Llama 3.3 / Qwen 2.5 / DeepSeek R1)</option>
+                <option value="openrouter">OpenRouter (Unified Multi-Model Gateway)</option>
+                <option value="custom">Custom / Local Endpoint (Ollama / vLLM / LM Studio)</option>
               </select>
             </div>
 
@@ -630,55 +642,93 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           {/* Model Identifier with Verification & Auto-Correct */}
           <div>
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between mb-1.5">
               <label className="font-semibold text-stone-700">
                 Model Identifier
               </label>
               <span className="text-[11px] text-stone-400">
-                e.g. gemini-3.8-flash, gemini-3.6-flash, gpt-4o, claude-3-5-sonnet
+                Any valid model name works (e.g. current or future models like gemini-3.9-flash)
               </span>
             </div>
+
+            {/* Quick-Select Recommendation Pills */}
+            {PROVIDER_MODEL_PRESETS[provider] && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider mr-1">
+                  Popular:
+                </span>
+                {PROVIDER_MODEL_PRESETS[provider].map((preset) => {
+                  const isSelected = model.trim() === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => {
+                        setModel(preset.id);
+                        setModelWarning(null);
+                      }}
+                      className={`text-[11px] px-2.5 py-1 rounded-md font-mono transition-all flex items-center gap-1 cursor-pointer ${
+                        isSelected
+                          ? "bg-purple-900 text-white font-bold shadow-2xs"
+                          : "bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200"
+                      }`}
+                      title={preset.label}
+                    >
+                      <span>{preset.id}</span>
+                      {preset.badge && (
+                        <span
+                          className={`text-[9px] px-1 py-0.2 rounded font-sans ${
+                            isSelected
+                              ? "bg-purple-800 text-purple-100"
+                              : "bg-stone-200 text-stone-500"
+                          }`}
+                        >
+                          {preset.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <input
                 id="input-ai-model"
                 type="text"
+                list="model-suggestions"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. gemini-3.8-flash"
-                className={`w-full bg-stone-50 border rounded-lg px-3 py-2 text-stone-800 font-mono text-xs ${
-                  modelWarning?.invalid
-                    ? "border-amber-400 focus:ring-amber-500"
-                    : "border-stone-300 focus:ring-purple-600"
-                }`}
+                placeholder="Type or select model (e.g. gemini-3.8-flash, gpt-5.4, claude-3-7-sonnet)"
+                className="w-full bg-stone-50 border border-stone-300 focus:ring-purple-600 rounded-lg px-3 py-2 text-stone-800 font-mono text-xs"
               />
+              <datalist id="model-suggestions">
+                {(PROVIDER_MODEL_PRESETS[provider] || []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </datalist>
             </div>
 
-            {/* Model Name Warning & Auto-Correct Action */}
-            {modelWarning?.invalid && (
-              <div className="mt-2 p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold">
-                      Incorrect or non-standard model name: &quot;{modelWarning.entered}&quot;
-                    </p>
-                    <p className="text-[11px] text-amber-800 mt-0.5">
-                      The official standard model identifier is{" "}
-                      <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono font-bold">
-                        {modelWarning.suggestion}
-                      </code>
-                      .
-                    </p>
-                  </div>
+            {/* Model Name Non-Blocking Format Suggestion */}
+            {modelWarning?.suggestion && (
+              <div className="mt-2 p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Wand2 className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span className="text-[11px]">
+                    Tip: Did you mean the standard identifier{" "}
+                    <code className="bg-blue-100 text-blue-900 px-1.5 py-0.5 rounded font-mono font-bold">
+                      {modelWarning.suggestion}
+                    </code>
+                    ?
+                  </span>
                 </div>
                 <button
                   id="btn-auto-correct-model"
                   type="button"
                   onClick={handleApplyAutoCorrect}
-                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg shrink-0 flex items-center justify-center gap-1.5 shadow-2xs transition-colors"
+                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shrink-0 text-[11px] shadow-2xs transition-colors cursor-pointer"
                 >
-                  <Wand2 className="w-3.5 h-3.5" />
-                  <span>Auto-Correct to {modelWarning.suggestion}</span>
+                  Apply &quot;{modelWarning.suggestion}&quot;
                 </button>
               </div>
             )}

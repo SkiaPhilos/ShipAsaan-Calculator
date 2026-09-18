@@ -314,14 +314,29 @@ app.post("/api/ai/extract-tariff", async (req, res) => {
 
     const provider = providerConfig?.provider || "gemini";
     const userApiKey = providerConfig?.apiKey;
-    let targetModel = (providerConfig?.model === "custom" ? providerConfig?.customModel : providerConfig?.model) || "gemini-3.8-flash";
+    
+    // Pick appropriate default model if none specified
+    const defaultModelForProvider: Record<string, string> = {
+      gemini: "gemini-3.8-flash",
+      openai: "gpt-4o-mini",
+      anthropic: "claude-3-5-haiku-20241022",
+      deepseek: "deepseek-chat",
+      groq: "llama-3.3-70b-versatile",
+      openrouter: "google/gemini-2.5-flash",
+      custom: "custom-model",
+    };
 
-    // Auto-correct model names for Gemini if needed
+    let targetModel = (
+      providerConfig?.model === "custom" ? providerConfig?.customModel : providerConfig?.model
+    )?.trim() || defaultModelForProvider[provider] || "gemini-3.8-flash";
+
+    // Auto-resolve common shorthand phrases to standard identifiers
     if (provider === "gemini") {
-      if (!targetModel || targetModel === "gemini flash") targetModel = "gemini-3.8-flash";
-      else if (targetModel === "gemini 3.6" || targetModel === "gemini-3.6" || targetModel === "gemini 3.6 flash") targetModel = "gemini-3.6-flash";
-      else if (targetModel === "gemini 3.8" || targetModel === "gemini-3.8") targetModel = "gemini-3.8-flash";
-      else if (targetModel === "gemini 2.5" || targetModel === "gemini-2.5") targetModel = "gemini-2.5-flash";
+      const lower = targetModel.toLowerCase();
+      if (lower === "gemini flash" || lower === "flash") targetModel = "gemini-3.8-flash";
+      else if (lower === "gemini 3.8" || lower === "gemini-3.8" || lower === "gemini 3.8 flash") targetModel = "gemini-3.8-flash";
+      else if (lower === "gemini 3.6" || lower === "gemini-3.6" || lower === "gemini 3.6 flash") targetModel = "gemini-3.6-flash";
+      else if (lower === "gemini 2.5" || lower === "gemini-2.5" || lower === "gemini 2.5 flash") targetModel = "gemini-2.5-flash";
     }
 
     // Check if input is a base64 Data URL (e.g. image, PDF, or spreadsheet)
@@ -548,9 +563,16 @@ Return ONLY valid, parseable JSON. Do NOT include markdown code blocks or backti
         }
       });
       rawOutput = response.text || "";
-    } else if (provider === "openai" || provider === "groq" || provider === "openrouter" || provider === "custom") {
+    } else if (
+      provider === "openai" ||
+      provider === "deepseek" ||
+      provider === "groq" ||
+      provider === "openrouter" ||
+      provider === "custom"
+    ) {
       let endpoint = "https://api.openai.com/v1/chat/completions";
       let authHeader = `Bearer ${userApiKey}`;
+      if (provider === "deepseek") endpoint = "https://api.deepseek.com/chat/completions";
       if (provider === "groq") endpoint = "https://api.groq.com/openai/v1/chat/completions";
       if (provider === "openrouter") endpoint = "https://openrouter.ai/api/v1/chat/completions";
       if (provider === "custom") {
@@ -564,6 +586,10 @@ Return ONLY valid, parseable JSON. Do NOT include markdown code blocks or backti
         "Content-Type": "application/json",
       };
       if (authHeader) headers["Authorization"] = authHeader;
+      if (provider === "openrouter") {
+        headers["HTTP-Referer"] = "https://aistudio.google.com";
+        headers["X-Title"] = "Courier Tariff OS";
+      }
 
       let userContentPayload: any = userTextPrompt;
       if (isDataUrl) {
@@ -579,18 +605,41 @@ Return ONLY valid, parseable JSON. Do NOT include markdown code blocks or backti
         ];
       }
 
-      const resp = await fetch(endpoint, {
+      // Check if model should use response_format: { type: "json_object" }
+      const isReasoner = targetModel.toLowerCase().includes("reasoner") || targetModel.toLowerCase().includes("r1");
+      const requestPayload: any = {
+        model: targetModel,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContentPayload }
+        ],
+      };
+
+      if (!isReasoner) {
+        requestPayload.response_format = { type: "json_object" };
+      }
+
+      let resp = await fetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({
-          model: targetModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userContentPayload }
-          ],
-          response_format: { type: "json_object" }
-        })
+        body: JSON.stringify(requestPayload)
       });
+
+      // If rejected due to response_format constraint, gracefully retry without it
+      if (!resp.ok && requestPayload.response_format) {
+        const errorPeek = await resp.clone().text();
+        if (
+          resp.status === 400 &&
+          (errorPeek.includes("response_format") || errorPeek.includes("schema") || errorPeek.includes("unsupported"))
+        ) {
+          delete requestPayload.response_format;
+          resp = await fetch(endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(requestPayload)
+          });
+        }
+      }
 
       if (!resp.ok) {
         const errText = await resp.text();
@@ -630,7 +679,7 @@ Return ONLY valid, parseable JSON. Do NOT include markdown code blocks or backti
         },
         body: JSON.stringify({
           model: targetModel,
-          max_tokens: 4000,
+          max_tokens: 8192,
           system: systemPrompt,
           messages: [{ role: "user", content: userContentPayload }]
         })
@@ -646,12 +695,22 @@ Return ONLY valid, parseable JSON. Do NOT include markdown code blocks or backti
       rawOutput = data.content?.[0]?.text || "";
     }
 
-    // Clean and parse JSON
+    // Clean and parse JSON safely
     let cleanJson = rawOutput.trim();
-    if (cleanJson.startsWith("```json")) {
-      cleanJson = cleanJson.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-    } else if (cleanJson.startsWith("```")) {
-      cleanJson = cleanJson.replace(/^```\s*/, "").replace(/\s*```$/, "");
+
+    // Remove any <think> tags from reasoning models (e.g. DeepSeek R1, Groq R1)
+    cleanJson = cleanJson.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+    // Extract JSON block from markdown code fences or brackets
+    const markdownMatch = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (markdownMatch) {
+      cleanJson = markdownMatch[1].trim();
+    } else {
+      const firstBrace = cleanJson.indexOf("{");
+      const lastBrace = cleanJson.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        cleanJson = cleanJson.substring(firstBrace, lastBrace + 1).trim();
+      }
     }
 
     try {

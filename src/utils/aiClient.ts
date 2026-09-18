@@ -308,7 +308,7 @@ export async function extractTariffUniversal(params: {
   partnerHint?: string;
   providerConfig?: AIProviderConfig;
 }): Promise<{ ok: boolean; data?: any; error?: string }> {
-  // 1. Try server proxy if on HTTP/HTTPS
+  // 1. Try server proxy first if on HTTP/HTTPS
   if (typeof window !== "undefined" && window.location.protocol.startsWith("http")) {
     try {
       const resp = await fetch("/api/ai/extract-tariff", {
@@ -316,29 +316,40 @@ export async function extractTariffUniversal(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),
       });
-      if (resp.ok) {
-        const result = await resp.json();
-        if (result.ok && result.data) {
-          return result;
-        }
+      const result = await resp.json().catch(() => null);
+      if (result?.ok && result?.data) {
+        return result;
       }
-    } catch {
+      if (result?.error) {
+        return { ok: false, error: result.error };
+      }
+    } catch (networkErr: any) {
+      console.warn("Server AI proxy unreachable, attempting direct client fallback:", networkErr);
       // Fall through to direct
     }
   }
 
   // 2. Direct client extraction fallback
   const config = params.providerConfig;
+  const provider = config?.provider || "gemini";
   const fallbackKey = ((import.meta as any).env?.VITE_GEMINI_API_KEY || "").trim();
-  const apiKey = config?.apiKey?.trim() || fallbackKey;
+  const apiKey = (config?.apiKey || "").trim() || (provider === "gemini" ? fallbackKey : "");
+  
   if (!apiKey) {
     return {
       ok: false,
-      error: "No AI API Key configured. Please go to Settings > AI Provider or configure VITE_GEMINI_API_KEY.",
+      error: `No API Key configured for ${provider.toUpperCase()}. Please configure an API key in Settings -> AI Configuration.`,
     };
   }
 
-  const targetModel = config?.model?.trim() || "gemini-3.8-flash";
+  const targetModel = config?.model?.trim() || (
+    provider === "gemini" ? "gemini-3.8-flash" :
+    provider === "openai" ? "gpt-4o-mini" :
+    provider === "deepseek" ? "deepseek-chat" :
+    provider === "groq" ? "llama-3.3-70b-versatile" :
+    provider === "anthropic" ? "claude-3-5-haiku-20241022" : "gemini-3.8-flash"
+  );
+
   const prompt = `You are the Tariff Intelligence & Rate Normalization Engine for Ship Asaan Logistics.
 WORKSPACE: ${params.workspace.toUpperCase()}
 FILENAME: ${params.filename}
@@ -359,41 +370,93 @@ Return ONLY valid JSON matching this schema:
   "ambiguities": [],
   "transformationsApplied": [],
   "dynamicRules": [],
+  "rateMatrix": {
+    "columns": [],
+    "rows": []
+  },
   "normalizedData": {
     "baseRate": 0,
     "additionalKgRate": 0,
     "fuelSurchargePct": 0,
     "gstPct": 0,
-    "rates": []
+    "rates": [],
+    "surcharges": []
   },
   "rawExtraction": {}
 }`;
 
   try {
-    const endpoint = getDirectGeminiEndpoint(targetModel, apiKey);
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
+    let rawText = "";
+
+    if (provider === "gemini") {
+      const endpoint = getDirectGeminiEndpoint(targetModel, apiKey);
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        return { ok: false, error: `Gemini extraction failed (${resp.status}): ${errText}` };
+      }
+
+      const jsonResp = await resp.json();
+      rawText = jsonResp.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    } else if (provider === "openai" || provider === "deepseek" || provider === "groq" || provider === "openrouter") {
+      let endpoint = "https://api.openai.com/v1/chat/completions";
+      if (provider === "deepseek") endpoint = "https://api.deepseek.com/chat/completions";
+      if (provider === "groq") endpoint = "https://api.groq.com/openai/v1/chat/completions";
+      if (provider === "openrouter") endpoint = "https://openrouter.ai/api/v1/chat/completions";
+
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
         },
-      }),
-    });
+        body: JSON.stringify({
+          model: targetModel,
+          messages: [
+            { role: "system", content: "You are a professional logistics tariff normalization engine. Return valid JSON only." },
+            { role: "user", content: prompt }
+          ],
+        }),
+      });
 
-    if (!resp.ok) {
-      const errText = await resp.text();
-      return { ok: false, error: `Gemini extraction failed (${resp.status}): ${errText}` };
+      if (!resp.ok) {
+        const errText = await resp.text();
+        return { ok: false, error: `${provider} extraction failed (${resp.status}): ${errText}` };
+      }
+
+      const jsonResp = await resp.json();
+      rawText = jsonResp.choices?.[0]?.message?.content || "";
+    } else {
+      return { ok: false, error: `Direct client fallback is not supported for provider '${provider}'. Please ensure the backend server is running.` };
     }
 
-    const jsonResp = await resp.json();
-    const rawText = jsonResp.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!rawText) {
-      return { ok: false, error: "Empty extraction response from Gemini" };
+      return { ok: false, error: `Empty response from ${provider}` };
     }
 
-    const cleanJson = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    let cleanJson = rawText.trim();
+    cleanJson = cleanJson.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    const markdownMatch = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (markdownMatch) {
+      cleanJson = markdownMatch[1].trim();
+    } else {
+      const firstBrace = cleanJson.indexOf("{");
+      const lastBrace = cleanJson.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        cleanJson = cleanJson.substring(firstBrace, lastBrace + 1).trim();
+      }
+    }
+
     const data = JSON.parse(cleanJson);
     return { ok: true, data };
   } catch (err: any) {
