@@ -1,5 +1,10 @@
-// Robust IndexedDB-backed brand logo storage to prevent browser LocalStorage QuotaExceededError
-// Supports high-resolution transparent PNG, JPG/JPEG, SVG, and ICO files.
+// Robust cloud-synced brand logo storage backed by Firebase Firestore with IndexedDB caching
+// Supports high-resolution transparent PNG, JPG/JPEG, SVG, and ICO files across all team members and devices.
+import {
+  saveBrandLogoToFirestore,
+  getBrandLogoFromFirestore,
+  removeBrandLogoFromFirestore,
+} from "../db/firebase";
 
 const DB_NAME = "ShipAsaanDB";
 const DB_VERSION = 1;
@@ -112,12 +117,16 @@ export class LogoStorageManager {
   }
 
   /**
-   * Get the saved logo data URL or public asset fallback
+   * Get the saved logo data URL:
+   * First checks local IndexedDB cache for instant display.
+   * Asynchronously or on cache miss, fetches latest logo from Firestore.
    */
   static async getLogo(): Promise<string | null> {
+    // 1. Try local IndexedDB cache first for zero-latency load
+    let cachedLogo: string | null = null;
     try {
       const db = await openDB();
-      return new Promise((resolve) => {
+      cachedLogo = await new Promise<string | null>((resolve) => {
         const tx = db.transaction(STORE_NAME, "readonly");
         const store = tx.objectStore(STORE_NAME);
         const req = store.get(LOGO_KEY);
@@ -125,27 +134,44 @@ export class LogoStorageManager {
           if (req.result) {
             resolve(req.result as string);
           } else {
-            // Check legacy localStorage if any
-            try {
-              const legacy = localStorage.getItem("ship_asaan_logo");
-              if (legacy && legacy.startsWith("data:image/")) {
-                resolve(legacy);
-                return;
-              }
-            } catch (_) {}
             resolve(null);
           }
         };
         req.onerror = () => resolve(null);
       });
     } catch (err) {
-      console.warn("Could not retrieve logo from IndexedDB:", err);
-      return null;
+      console.warn("Could not read local logo cache:", err);
     }
+
+    // 2. Fetch from Firebase Firestore for cross-device synchronization
+    try {
+      const remoteLogo = await getBrandLogoFromFirestore();
+      if (remoteLogo) {
+        // If remote logo is different or new, update local cache
+        if (remoteLogo !== cachedLogo) {
+          try {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, "readwrite");
+            tx.objectStore(STORE_NAME).put(remoteLogo, LOGO_KEY);
+          } catch (_) {}
+          // Notify components if changed
+          if (cachedLogo && remoteLogo !== cachedLogo) {
+            window.dispatchEvent(
+              new CustomEvent("ship_asaan_logo_changed", { detail: { dataUrl: remoteLogo } })
+            );
+          }
+        }
+        return remoteLogo;
+      }
+    } catch (err) {
+      console.warn("Could not fetch remote logo from Firestore:", err);
+    }
+
+    return cachedLogo;
   }
 
   /**
-   * Save a newly uploaded logo file into IndexedDB
+   * Save a newly uploaded logo file into both IndexedDB and Firestore
    */
   static async saveLogo(
     file: File
@@ -161,6 +187,7 @@ export class LogoStorageManager {
       const processedDataUrl = await processImageFile(file);
       const db = await openDB();
 
+      // 1. Cache locally in IndexedDB
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, "readwrite");
         const store = tx.objectStore(STORE_NAME);
@@ -174,6 +201,13 @@ export class LogoStorageManager {
         localStorage.removeItem("ship_asaan_logo");
       } catch (_) {}
 
+      // 2. Synchronize to Firestore for all users/computers
+      try {
+        await saveBrandLogoToFirestore(processedDataUrl);
+      } catch (cloudErr: any) {
+        console.warn("Warning: Logo saved locally but Firestore sync failed:", cloudErr);
+      }
+
       // Broadcast update event to all components
       window.dispatchEvent(
         new CustomEvent("ship_asaan_logo_changed", { detail: { dataUrl: processedDataUrl } })
@@ -181,7 +215,7 @@ export class LogoStorageManager {
 
       return { success: true, dataUrl: processedDataUrl };
     } catch (err: any) {
-      console.error("Error saving brand logo to IndexedDB:", err);
+      console.error("Error saving brand logo:", err);
       return {
         success: false,
         error: err.message || "Failed to save logo. Please try a different image.",
@@ -190,7 +224,7 @@ export class LogoStorageManager {
   }
 
   /**
-   * Remove custom logo and restore default typography branding
+   * Remove custom logo and restore default typography branding across all devices
    */
   static async removeLogo(): Promise<void> {
     try {
@@ -205,6 +239,13 @@ export class LogoStorageManager {
       try {
         localStorage.removeItem("ship_asaan_logo");
       } catch (_) {}
+
+      // Delete from Firestore
+      try {
+        await removeBrandLogoFromFirestore();
+      } catch (cloudErr) {
+        console.warn("Failed to remove logo from Firestore:", cloudErr);
+      }
 
       window.dispatchEvent(
         new CustomEvent("ship_asaan_logo_changed", { detail: { dataUrl: null } })

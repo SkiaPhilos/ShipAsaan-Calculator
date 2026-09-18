@@ -3,6 +3,7 @@ import {
   getFirestore,
   collection,
   doc,
+  getDoc,
   setDoc,
   deleteDoc,
   onSnapshot,
@@ -54,6 +55,7 @@ export const COLLECTIONS = {
   CALCULATION_HISTORY: "calculation_history",
   DOMESTIC_PARTNERS: "partners_domestic",
   INTERNATIONAL_PARTNERS: "partners_international",
+  BRAND_ASSETS: "brand_assets",
 };
 
 /**
@@ -289,6 +291,30 @@ export async function deletePartnerFromFirestore(
       ? COLLECTIONS.DOMESTIC_PARTNERS
       : COLLECTIONS.INTERNATIONAL_PARTNERS;
   const docRef = doc(db, colName, partnerId);
+  await deleteDoc(docRef);
+}
+
+export async function saveBrandLogoToFirestore(dataUrl: string): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.BRAND_ASSETS, "workspace_logo");
+  await setDoc(docRef, { dataUrl, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+export async function getBrandLogoFromFirestore(): Promise<string | null> {
+  try {
+    const docRef = doc(db, COLLECTIONS.BRAND_ASSETS, "workspace_logo");
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data()?.dataUrl || null;
+    }
+    return null;
+  } catch (err) {
+    console.warn("Firestore logo fetch error:", err);
+    return null;
+  }
+}
+
+export async function removeBrandLogoFromFirestore(): Promise<void> {
+  const docRef = doc(db, COLLECTIONS.BRAND_ASSETS, "workspace_logo");
   await deleteDoc(docRef);
 }
 
