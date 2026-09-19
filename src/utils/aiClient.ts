@@ -1,6 +1,181 @@
 import { AIProviderConfig } from "../types";
 
 /**
+ * Universal AI Model Normalizer:
+ * Handles shorthand versions (e.g. "3.7", "3.6", "3.5", "3.8", "3.1"),
+ * space-delimited formats (e.g. "gemini 3.7 flash" -> "gemini-3.7-flash"),
+ * and ensures future custom models (e.g. "gemini-3.9-flash") resolve correctly.
+ */
+export function normalizeAIModel(provider: string, rawModel?: string): string {
+  let m = (rawModel || "").trim();
+  if (provider === "gemini") {
+    if (!m) return "gemini-3.8-flash";
+    if (m.startsWith("models/")) m = m.replace("models/", "");
+    const lower = m.toLowerCase();
+
+    if (
+      lower === "3.7" ||
+      lower === "3.7-flash" ||
+      lower === "3.7 flash" ||
+      lower === "gemini-3.7" ||
+      lower === "gemini 3.7" ||
+      lower === "gemini 3.7 flash" ||
+      lower === "gemini-3.7-flash"
+    ) {
+      return "gemini-3.7-flash";
+    }
+    if (
+      lower === "3.6" ||
+      lower === "3.6-flash" ||
+      lower === "3.6 flash" ||
+      lower === "gemini-3.6" ||
+      lower === "gemini 3.6" ||
+      lower === "gemini 3.6 flash" ||
+      lower === "gemini-3.6-flash"
+    ) {
+      return "gemini-3.6-flash";
+    }
+    if (
+      lower === "3.5" ||
+      lower === "3.5-flash" ||
+      lower === "3.5 flash" ||
+      lower === "gemini-3.5" ||
+      lower === "gemini 3.5" ||
+      lower === "gemini 3.5 flash" ||
+      lower === "gemini-3.5-flash"
+    ) {
+      return "gemini-3.5-flash";
+    }
+    if (
+      lower === "3.5-lite" ||
+      lower === "3.5 lite" ||
+      lower === "3.5-flash-lite" ||
+      lower === "3.5 flash lite" ||
+      lower === "gemini-3.5-flash-lite" ||
+      lower === "gemini 3.5 flash lite"
+    ) {
+      return "gemini-3.5-flash-lite";
+    }
+    if (
+      lower === "3.8" ||
+      lower === "3.8-flash" ||
+      lower === "3.8 flash" ||
+      lower === "gemini-3.8" ||
+      lower === "gemini 3.8" ||
+      lower === "gemini 3.8 flash" ||
+      lower === "gemini-3.8-flash"
+    ) {
+      return "gemini-3.8-flash";
+    }
+    if (
+      lower === "3.1" ||
+      lower === "3.1 pro" ||
+      lower === "gemini 3.1" ||
+      lower === "gemini 3.1 pro" ||
+      lower === "gemini-3.1" ||
+      lower === "gemini-3.1-pro" ||
+      lower === "gemini-3.1-pro-preview"
+    ) {
+      return "gemini-3.1-pro-preview";
+    }
+    if (
+      lower === "3.1 lite" ||
+      lower === "3.1 flash lite" ||
+      lower === "gemini 3.1 lite" ||
+      lower === "gemini 3.1 flash lite" ||
+      lower === "gemini-3.1-flash-lite" ||
+      lower === "gemini-3.1-flash-lite-preview"
+    ) {
+      return "gemini-3.1-flash-lite";
+    }
+    if (
+      lower === "2.5" ||
+      lower === "2.5 flash" ||
+      lower === "gemini 2.5" ||
+      lower === "gemini 2.5 flash" ||
+      lower === "gemini-2.5" ||
+      lower === "gemini-2.5-flash"
+    ) {
+      return "gemini-2.5-flash";
+    }
+    if (lower === "2.5 pro" || lower === "gemini 2.5 pro" || lower === "gemini-2.5-pro") {
+      return "gemini-2.5-pro";
+    }
+    if (lower === "flash" || lower === "gemini flash" || lower === "gemini-flash") {
+      return "gemini-3.8-flash";
+    }
+    if (lower === "pro" || lower === "gemini pro" || lower === "gemini-pro") {
+      return "gemini-3.1-pro-preview";
+    }
+
+    if (m.includes(" ")) {
+      m = m.toLowerCase().replace(/\s+/g, "-");
+    }
+    if (/^\d/.test(m)) {
+      m = `gemini-${m}`;
+      if (!m.includes("flash") && !m.includes("pro")) {
+        m = `${m}-flash`;
+      }
+    }
+    return m;
+  }
+
+  if (provider === "anthropic") {
+    const lower = m.toLowerCase();
+    if (
+      lower === "3.7" ||
+      lower === "claude 3.7" ||
+      lower === "claude 3.7 sonnet" ||
+      lower === "3.7 sonnet" ||
+      lower === "claude-3.7-sonnet" ||
+      lower === "claude-3-7-sonnet"
+    ) {
+      return "claude-3-7-sonnet-20250219";
+    }
+    if (
+      lower === "3.5" ||
+      lower === "claude 3.5" ||
+      lower === "claude 3.5 sonnet" ||
+      lower === "3.5 sonnet" ||
+      lower === "claude-3.5-sonnet"
+    ) {
+      return "claude-3-5-sonnet-20241022";
+    }
+    if (lower === "haiku" || lower === "claude haiku" || lower === "claude 3.5 haiku" || lower === "claude-3-5-haiku") {
+      return "claude-3-5-haiku-20241022";
+    }
+    return m.replace(/\s+/g, "-");
+  }
+
+  if (provider === "openai") {
+    const lower = m.toLowerCase();
+    if (lower === "4o" || lower === "gpt 4o" || lower === "gpt-4") return "gpt-4o";
+    if (lower === "4o mini" || lower === "gpt 4o mini") return "gpt-4o-mini";
+    if (lower === "o3" || lower === "o3 mini") return "o3-mini";
+    if (lower === "o4" || lower === "o4 mini") return "o4-mini";
+    if (lower === "5.4" || lower === "gpt 5.4") return "gpt-5.4";
+    if (lower === "5.5" || lower === "gpt 5.5") return "gpt-5.5";
+    return m.replace(/\s+/g, "-");
+  }
+
+  if (provider === "deepseek") {
+    const lower = m.toLowerCase();
+    if (lower === "chat" || lower === "v3" || lower === "deepseek") return "deepseek-chat";
+    if (lower === "reasoner" || lower === "r1") return "deepseek-reasoner";
+    return m.replace(/\s+/g, "-");
+  }
+
+  if (provider === "groq") {
+    const lower = m.toLowerCase();
+    if (lower === "llama" || lower === "llama 3.3" || lower === "llama 70b") return "llama-3.3-70b-versatile";
+    if (lower === "deepseek r1" || lower === "r1") return "deepseek-r1-distill-llama-70b";
+    return m.replace(/\s+/g, "-");
+  }
+
+  return m;
+}
+
+/**
  * Universal AI Service caller that seamlessly supports:
  * 1. Web / Cloud mode: proxies via /api/ai/* (Express server)
  * 2. Packaged Desktop file:// mode: direct browser-side API calls to Gemini, OpenAI, Claude, Groq, DeepSeek, etc.
@@ -23,7 +198,8 @@ export async function testAIConnectionUniversal(config: AIProviderConfig): Promi
   const startTime = Date.now();
   const provider = config.provider || "gemini";
   const apiKey = (config.apiKey || "").trim();
-  let targetModel = (config.model || "").trim();
+  const rawModel = config.model === "custom" ? config.customModel : config.model;
+  let targetModel = normalizeAIModel(provider, rawModel);
 
   // Try server proxy FIRST if we are running in an HTTP/HTTPS context where /api exists
   if (typeof window !== "undefined" && window.location.protocol.startsWith("http")) {
@@ -342,13 +518,8 @@ export async function extractTariffUniversal(params: {
     };
   }
 
-  const targetModel = config?.model?.trim() || (
-    provider === "gemini" ? "gemini-3.8-flash" :
-    provider === "openai" ? "gpt-4o-mini" :
-    provider === "deepseek" ? "deepseek-chat" :
-    provider === "groq" ? "llama-3.3-70b-versatile" :
-    provider === "anthropic" ? "claude-3-5-haiku-20241022" : "gemini-3.8-flash"
-  );
+  const rawModel = config?.model === "custom" ? config?.customModel : config?.model;
+  const targetModel = normalizeAIModel(provider, rawModel);
 
   const prompt = `You are the Tariff Intelligence & Rate Normalization Engine for Ship Asaan Logistics.
 WORKSPACE: ${params.workspace.toUpperCase()}

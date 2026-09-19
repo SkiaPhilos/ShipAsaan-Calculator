@@ -25,7 +25,7 @@ export const initialUser: AppUser = {
   fullName: "Skyler — Logistics Director",
   email: "skylerisbusy@gmail.com",
   role: "admin",
-  password: "admin", // simple, easily verifiable default for local desktop app
+  status: "active",
   createdAt: "2026-08-01T09:00:00Z",
 };
 

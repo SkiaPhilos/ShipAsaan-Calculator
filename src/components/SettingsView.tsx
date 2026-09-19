@@ -21,8 +21,20 @@ import {
   AlertTriangle,
   X,
   Image as ImageIcon,
+  Mail,
+  Check,
+  ShieldAlert,
+  Users,
+  Clock,
+  Inbox,
+  UserCheck,
+  UserX,
+  ChevronDown,
+  ChevronUp,
+  History,
+  Send,
 } from "lucide-react";
-import { AIProviderConfig, AppUser } from "../types";
+import { AIProviderConfig, AppUser, LoginAttemptRecord, AdminEmailNotification } from "../types";
 import { LocalStorageManager } from "../db/localStore";
 import { LogoStorageManager } from "../utils/logoStorage";
 import { testAIConnectionUniversal } from "../utils/aiClient";
@@ -40,7 +52,10 @@ interface SettingsViewProps {
 const PROVIDER_MODEL_PRESETS: Record<string, Array<{ id: string; label: string; badge?: string }>> = {
   gemini: [
     { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", badge: "Current Flagship" },
-    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", badge: "High Speed" },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", badge: "Latest Flash" },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", badge: "High Speed" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", badge: "Fast Generation" },
+    { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", badge: "Ultra Low Latency" },
     { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", badge: "Complex Reasoning" },
     { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", badge: "Stable GA" },
     { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", badge: "Deep Thinking" },
@@ -201,6 +216,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
+    // Common shorthand conveniences
+    const clean = raw.toLowerCase();
+    if (prov === "gemini") {
+      if (clean === "3.7" || clean === "3.7-flash" || clean === "3.7 flash" || clean === "gemini 3.7" || clean === "gemini 3.7 flash") {
+        setModelWarning({ invalid: false, entered: modelName, suggestion: "gemini-3.7-flash" });
+        return;
+      }
+      if (clean === "3.6" || clean === "3.6-flash" || clean === "3.6 flash" || clean === "gemini 3.6" || clean === "gemini 3.6 flash") {
+        setModelWarning({ invalid: false, entered: modelName, suggestion: "gemini-3.6-flash" });
+        return;
+      }
+      if (clean === "3.5" || clean === "3.5-flash" || clean === "3.5 flash" || clean === "gemini 3.5" || clean === "gemini 3.5 flash") {
+        setModelWarning({ invalid: false, entered: modelName, suggestion: "gemini-3.5-flash" });
+        return;
+      }
+      if (clean === "3.8" || clean === "3.8-flash" || clean === "3.8 flash" || clean === "gemini 3.8" || clean === "gemini 3.8 flash") {
+        setModelWarning({ invalid: false, entered: modelName, suggestion: "gemini-3.8-flash" });
+        return;
+      }
+      if (clean === "flash" || clean === "gemini-flash" || clean === "gemini flash") {
+        setModelWarning({
+          invalid: false,
+          entered: modelName,
+          suggestion: "gemini-3.8-flash",
+        });
+        return;
+      }
+    }
+
     // Check if model contains spaces (e.g. "gemini 3.9 flash" instead of "gemini-3.9-flash")
     if (raw.includes(" ")) {
       const hyphenated = raw.toLowerCase().replace(/\s+/g, "-");
@@ -208,17 +252,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         invalid: false,
         entered: modelName,
         suggestion: hyphenated,
-      });
-      return;
-    }
-
-    // Common shorthand conveniences
-    const clean = raw.toLowerCase();
-    if (prov === "gemini" && (clean === "flash" || clean === "gemini-flash")) {
-      setModelWarning({
-        invalid: false,
-        entered: modelName,
-        suggestion: "gemini-3.8-flash",
       });
       return;
     }
@@ -347,6 +380,145 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         type: "error",
         text: res.message || "Failed to update password.",
       });
+    }
+  };
+
+  // -------------------------------------------------------------
+  // ADMIN ACCESS CONTROL, APPROVALS & AUDIT LOG STATE
+  // -------------------------------------------------------------
+  const [usersList, setUsersList] = useState<AppUser[]>([]);
+  const [loginAttempts, setLoginAttempts] = useState<LoginAttemptRecord[]>([]);
+  const [adminNotifications, setAdminNotifications] = useState<AdminEmailNotification[]>([]);
+  const [isLoadingAdminData, setIsLoadingAdminData] = useState(false);
+  const [adminActionFeedback, setAdminActionFeedback] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [adminActiveSubTab, setAdminActiveSubTab] = useState<
+    "approvals" | "directory" | "login_attempts" | "email_log"
+  >("approvals");
+  const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null);
+
+  const fetchAdminData = async () => {
+    setIsLoadingAdminData(true);
+    try {
+      // 1. Fetch users
+      const usersRes = await fetch("/api/admin/users");
+      if (usersRes.ok) {
+        const data = await usersRes.json();
+        if (data.ok && Array.isArray(data.users)) {
+          setUsersList(data.users);
+        }
+      } else {
+        setUsersList(LocalStorageManager.getUsersList());
+      }
+
+      // 2. Fetch login attempts
+      const attemptsRes = await fetch("/api/admin/login-attempts");
+      if (attemptsRes.ok) {
+        const data = await attemptsRes.json();
+        if (data.ok && Array.isArray(data.attempts)) {
+          setLoginAttempts(data.attempts);
+        }
+      } else {
+        setLoginAttempts(LocalStorageManager.getLoginAttempts());
+      }
+
+      // 3. Fetch notifications
+      const notifsRes = await fetch("/api/admin/notifications");
+      if (notifsRes.ok) {
+        const data = await notifsRes.json();
+        if (data.ok && Array.isArray(data.notifications)) {
+          setAdminNotifications(data.notifications);
+        }
+      } else {
+        setAdminNotifications(LocalStorageManager.getAdminNotifications());
+      }
+    } catch (err) {
+      console.warn("Could not reach server admin endpoints, using local fallback:", err);
+      setUsersList(LocalStorageManager.getUsersList());
+      setLoginAttempts(LocalStorageManager.getLoginAttempts());
+      setAdminNotifications(LocalStorageManager.getAdminNotifications());
+    } finally {
+      setIsLoadingAdminData(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser.role === "admin") {
+      fetchAdminData();
+    }
+  }, [currentUser.role]);
+
+  const handleApproveUser = async (userId: string, approved: boolean) => {
+    try {
+      const res = await fetch("/api/admin/approve-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, approved }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setAdminActionFeedback({
+          type: "success",
+          text: data.message || `User account has been ${approved ? "approved and activated" : "declined"}.`,
+        });
+      } else {
+        setAdminActionFeedback({
+          type: "success",
+          text: `User account ${approved ? "approved" : "declined"}.`,
+        });
+      }
+      LocalStorageManager.updateUserStatus(userId, approved ? "active" : "rejected", currentUser.email);
+      fetchAdminData();
+      setTimeout(() => setAdminActionFeedback(null), 4000);
+    } catch (err) {
+      console.error(err);
+      LocalStorageManager.updateUserStatus(userId, approved ? "active" : "rejected", currentUser.email);
+      setAdminActionFeedback({
+        type: "success",
+        text: `User status updated successfully.`,
+      });
+      fetchAdminData();
+      setTimeout(() => setAdminActionFeedback(null), 4000);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    if (!confirm(`Are you sure you want to remove user "${userName}"?`)) return;
+    try {
+      await fetch("/api/admin/delete-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      const updated = LocalStorageManager.getUsersList().filter((u) => u.id !== userId);
+      LocalStorageManager.saveUsersList(updated);
+      setAdminActionFeedback({
+        type: "success",
+        text: `User "${userName}" removed.`,
+      });
+      fetchAdminData();
+      setTimeout(() => setAdminActionFeedback(null), 4000);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleClearLoginLogs = async () => {
+    if (!confirm("Clear login attempts history?")) return;
+    try {
+      await fetch("/api/admin/clear-logs", { method: "POST" });
+      LocalStorageManager.addLoginAttempt({
+        id: `att-${Date.now()}`,
+        emailOrUsername: currentUser.email,
+        timestamp: new Date().toISOString(),
+        status: "SUCCESS_ADMIN",
+        details: "Audit history cleared by administrator.",
+      });
+      fetchAdminData();
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -823,8 +995,494 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </div>
 
       {/* ===================================================== */}
-      {/* 2. User Account Security & Reset Password */}
+      {/* 2. User Accounts, Team Access Control & Security */}
       {/* ===================================================== */}
+
+      {/* Admin Access Control & Approvals Dashboard (Visible to Admin) */}
+      {currentUser.role === "admin" && (
+        <div
+          id="settings-admin-access-card"
+          className="bg-white border border-stone-200 rounded-2xl p-6 shadow-2xs space-y-5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-stone-100">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center text-purple-900">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-stone-900">
+                    Team Access Control & User Approvals
+                  </h2>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-900 text-white font-mono font-bold">
+                    Admin Console
+                  </span>
+                </div>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  Review new account signups, manage login permissions, and inspect real-time authentication audit logs.
+                </p>
+              </div>
+            </div>
+
+            <button
+              id="btn-refresh-admin-data"
+              type="button"
+              onClick={fetchAdminData}
+              disabled={isLoadingAdminData}
+              className="px-3 py-1.5 rounded-xl border border-stone-200 text-stone-700 hover:bg-stone-50 font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-2xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAdminData ? "animate-spin text-purple-700" : "text-stone-500"}`} />
+              <span>Refresh Records</span>
+            </button>
+          </div>
+
+          {/* Feedback Toast */}
+          {adminActionFeedback && (
+            <div
+              className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                adminActionFeedback.type === "success"
+                  ? "bg-green-50 border-green-200 text-green-900"
+                  : "bg-red-50 border-red-200 text-red-900"
+              }`}
+            >
+              {adminActionFeedback.type === "success" ? (
+                <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              )}
+              <span>{adminActionFeedback.text}</span>
+            </div>
+          )}
+
+          {/* Sub Tabs */}
+          <div className="flex items-center gap-1 border-b border-stone-200 pb-2 text-xs font-semibold overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => setAdminActiveSubTab("approvals")}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                adminActiveSubTab === "approvals"
+                  ? "bg-purple-900 text-white shadow-2xs font-bold"
+                  : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>Pending Approvals</span>
+              {usersList.filter((u) => u.status === "pending_approval").length > 0 && (
+                <span className="px-1.5 py-0.2 text-[10px] rounded-full bg-amber-400 text-purple-950 font-bold ml-1 animate-pulse">
+                  {usersList.filter((u) => u.status === "pending_approval").length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAdminActiveSubTab("directory")}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                adminActiveSubTab === "directory"
+                  ? "bg-purple-900 text-white shadow-2xs font-bold"
+                  : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Active Directory</span>
+              <span className="px-1.5 py-0.2 text-[10px] rounded-full bg-stone-200 text-stone-700 ml-1">
+                {usersList.filter((u) => u.status === "active" || (!u.status && u.role === "admin")).length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAdminActiveSubTab("login_attempts")}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                adminActiveSubTab === "login_attempts"
+                  ? "bg-purple-900 text-white shadow-2xs font-bold"
+                  : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Login Attempts Audit</span>
+              {loginAttempts.length > 0 && (
+                <span className="px-1.5 py-0.2 text-[10px] rounded-full bg-stone-200 text-stone-700 ml-1">
+                  {loginAttempts.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAdminActiveSubTab("email_log")}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                adminActiveSubTab === "email_log"
+                  ? "bg-purple-900 text-white shadow-2xs font-bold"
+                  : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>Admin Email Notification Log</span>
+              {adminNotifications.length > 0 && (
+                <span className="px-1.5 py-0.2 text-[10px] rounded-full bg-stone-200 text-stone-700 ml-1">
+                  {adminNotifications.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* TAB 1: PENDING APPROVALS */}
+          {adminActiveSubTab === "approvals" && (
+            <div className="space-y-3">
+              {usersList.filter((u) => u.status === "pending_approval").length === 0 ? (
+                <div className="p-8 text-center bg-stone-50 border border-stone-200 rounded-xl space-y-2">
+                  <CheckCircle2 className="w-8 h-8 text-green-600 mx-auto" />
+                  <p className="text-xs font-bold text-stone-800">No Pending Approvals</p>
+                  <p className="text-[11px] text-stone-500 max-w-sm mx-auto">
+                    All user accounts have been reviewed. When a new user signs up, their registration request and email alert will appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        <strong>{usersList.filter((u) => u.status === "pending_approval").length} user(s)</strong> awaiting your approval. Users cannot log in or view tariffs until approved.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    {usersList
+                      .filter((u) => u.status === "pending_approval")
+                      .map((u) => (
+                        <div
+                          key={u.id}
+                          className="p-4 bg-stone-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-amber-300 transition-colors shadow-2xs"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-stone-900">{u.fullName}</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold font-mono">
+                                Pending Approval
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-semibold capitalize">
+                                {u.role}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-600">
+                              <span>Email: <strong className="text-stone-800">{u.email}</strong></span>
+                              <span>Username: <strong className="font-mono text-stone-800">@{u.username}</strong></span>
+                              {u.department && (
+                                <span>Dept: <strong className="text-stone-800">{u.department}</strong></span>
+                              )}
+                              <span>Registered: <span className="text-stone-500 font-mono text-[11px]">{new Date(u.createdAt).toLocaleDateString()} {new Date(u.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></span>
+                            </div>
+                            {u.lastLoginStatus && (
+                              <p className="text-[11px] text-amber-800 mt-1 flex items-center gap-1">
+                                <ShieldAlert className="w-3 h-3 text-amber-600" />
+                                <span>Last attempt: {u.lastLoginStatus} ({u.lastLoginAttempt || "Recent"})</span>
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0">
+                            <button
+                              id={`btn-approve-user-${u.id}`}
+                              type="button"
+                              onClick={() => handleApproveUser(u.id, true)}
+                              className="px-3.5 py-1.5 rounded-xl bg-green-700 hover:bg-green-800 text-white font-bold text-xs shadow-2xs transition-colors flex items-center gap-1.5"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Approve Account</span>
+                            </button>
+
+                            <button
+                              id={`btn-decline-user-${u.id}`}
+                              type="button"
+                              onClick={() => handleApproveUser(u.id, false)}
+                              className="px-3 py-1.5 rounded-xl bg-stone-200 hover:bg-red-100 text-stone-700 hover:text-red-700 font-semibold text-xs transition-colors flex items-center gap-1"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Decline</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(u.id, u.fullName)}
+                              title="Delete registration"
+                              className="p-1.5 rounded-xl text-stone-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: ACTIVE TEAM DIRECTORY */}
+          {adminActiveSubTab === "directory" && (
+            <div className="space-y-3">
+              <div className="overflow-x-auto rounded-xl border border-stone-200">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-stone-100/70 border-b border-stone-200 text-stone-600 font-semibold">
+                      <th className="py-2.5 px-3">User & Email</th>
+                      <th className="py-2.5 px-3">Username</th>
+                      <th className="py-2.5 px-3">Role & Dept</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Approved / Registered</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100 bg-white">
+                    {/* Root Admin Account */}
+                    <tr className="hover:bg-purple-50/40 transition-colors">
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-stone-900">Skyler (Logistics Director)</div>
+                        <div className="text-[11px] text-stone-500">{currentUser.email}</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-stone-700">@skyler</td>
+                      <td className="py-2.5 px-3">
+                        <span className="px-2 py-0.5 rounded-full bg-purple-900 text-white font-bold text-[10px]">
+                          Super Admin
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-bold text-[10px]">
+                          Active
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-stone-500 text-[11px] font-mono">
+                        System Default
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-stone-400 text-[11px]">
+                        Primary Admin
+                      </td>
+                    </tr>
+
+                    {/* Other Users */}
+                    {usersList
+                      .filter((u) => u.email.toLowerCase() !== currentUser.email.toLowerCase() && u.username !== "skyler")
+                      .map((u) => (
+                        <tr key={u.id} className="hover:bg-stone-50 transition-colors">
+                          <td className="py-2.5 px-3">
+                            <div className="font-bold text-stone-900">{u.fullName}</div>
+                            <div className="text-[11px] text-stone-500">{u.email}</div>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-stone-700">@{u.username}</td>
+                          <td className="py-2.5 px-3">
+                            <div className="capitalize font-semibold text-stone-800">{u.role}</div>
+                            {u.department && <div className="text-[10px] text-stone-500">{u.department}</div>}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            {u.status === "active" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-bold text-[10px]">
+                                Active
+                              </span>
+                            ) : u.status === "rejected" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-bold text-[10px]">
+                                Declined
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px]">
+                                Pending
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-stone-500 text-[11px] font-mono">
+                            {u.approvedAt
+                              ? new Date(u.approvedAt).toLocaleDateString()
+                              : new Date(u.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {u.status !== "active" ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleApproveUser(u.id, true)}
+                                  className="px-2 py-1 text-[11px] bg-green-700 text-white rounded-lg font-semibold hover:bg-green-800 transition-colors"
+                                >
+                                  Approve
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleApproveUser(u.id, false)}
+                                  className="px-2 py-1 text-[11px] bg-stone-100 text-stone-700 rounded-lg hover:bg-red-50 hover:text-red-700 font-semibold transition-colors"
+                                >
+                                  Revoke
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteUser(u.id, u.fullName)}
+                                className="p-1 text-stone-400 hover:text-red-600 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: LOGIN ATTEMPTS AUDIT */}
+          {adminActiveSubTab === "login_attempts" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-stone-500">
+                  Real-time audit log of all signin, signup, and authentication attempts.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleClearLoginLogs}
+                  className="text-xs text-stone-500 hover:text-red-700 underline font-semibold"
+                >
+                  Clear Log History
+                </button>
+              </div>
+
+              {loginAttempts.length === 0 ? (
+                <div className="p-6 text-center bg-stone-50 border border-stone-200 rounded-xl text-xs text-stone-500">
+                  No login attempts recorded yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-stone-200">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-stone-100/70 border-b border-stone-200 text-stone-600 font-semibold">
+                        <th className="py-2.5 px-3">Timestamp</th>
+                        <th className="py-2.5 px-3">Identifier / User</th>
+                        <th className="py-2.5 px-3">Authentication Status</th>
+                        <th className="py-2.5 px-3">Audit Details</th>
+                        <th className="py-2.5 px-3">Client IP / Source</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100 bg-white">
+                      {loginAttempts.map((att) => (
+                        <tr key={att.id} className="hover:bg-stone-50 transition-colors">
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-stone-500 whitespace-nowrap">
+                            {new Date(att.timestamp).toLocaleDateString()} {new Date(att.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </td>
+                          <td className="py-2.5 px-3 font-bold text-stone-800">
+                            {att.emailOrUsername}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            {att.status === "SUCCESS_ADMIN" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-bold text-[10px]">
+                                Admin Authenticated
+                              </span>
+                            ) : att.status === "SUCCESS_USER" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-bold text-[10px]">
+                                User Logged In
+                              </span>
+                            ) : att.status === "BLOCKED_PENDING_APPROVAL" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold text-[10px]">
+                                Blocked: Awaiting Approval
+                              </span>
+                            ) : att.status === "SIGNUP_PENDING_APPROVAL" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 font-bold text-[10px]">
+                                New Registration
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-bold text-[10px]">
+                                Invalid Credentials
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-stone-600 text-[11px] max-w-xs truncate" title={att.details}>
+                            {att.details}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-stone-500">
+                            {att.ip || "127.0.0.1"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 4: ADMIN EMAIL NOTIFICATION LOG */}
+          {adminActiveSubTab === "email_log" && (
+            <div className="space-y-3">
+              <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-xl text-xs space-y-1 text-purple-950">
+                <div className="flex items-center gap-2 font-bold">
+                  <Mail className="w-4 h-4 text-purple-700" />
+                  <span>Outbound Email Dispatch Log to Admin ({process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com"})</span>
+                </div>
+                <p className="text-[11px] text-purple-900 leading-relaxed">
+                  Whenever a user signs up or requests approval, an automated alert email is generated and dispatched to the administrator. If SMTP credentials are configured in <code>.env</code>, messages are sent directly to the inbox; otherwise, they are archived in this secure system mailer log.
+                </p>
+              </div>
+
+              {adminNotifications.length === 0 ? (
+                <div className="p-6 text-center bg-stone-50 border border-stone-200 rounded-xl text-xs text-stone-500">
+                  No email notifications dispatched yet.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {adminNotifications.map((notif) => (
+                    <div
+                      key={notif.id}
+                      className="border border-stone-200 rounded-xl overflow-hidden bg-white hover:border-purple-200 transition-colors shadow-2xs"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setExpandedEmailId(expandedEmailId === notif.id ? null : notif.id)}
+                        className="w-full p-3.5 flex items-center justify-between text-left hover:bg-stone-50 transition-colors"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center text-purple-800 shrink-0 mt-0.5">
+                            <Send className="w-3.5 h-3.5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-stone-900">{notif.subject}</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 font-mono">
+                                {notif.deliveredVia === "smtp" ? "SMTP Delivered" : "System Mailer"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 text-[11px] text-stone-500 mt-0.5">
+                              <span>To: <strong>{notif.to}</strong></span>
+                              <span>&bull;</span>
+                              <span>{new Date(notif.timestamp).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-stone-400">
+                          {expandedEmailId === notif.id ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </div>
+                      </button>
+
+                      {expandedEmailId === notif.id && (
+                        <div className="p-4 bg-stone-50 border-t border-stone-200 font-mono text-[11px] text-stone-800 whitespace-pre-wrap leading-relaxed">
+                          {notif.body}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* User Account Security & Reset Password Card */}
       <div
         id="settings-user-account-card"
         className="bg-white border border-stone-200 rounded-2xl p-6 shadow-2xs space-y-4"

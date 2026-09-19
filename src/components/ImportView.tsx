@@ -394,10 +394,14 @@ Customs clearance documentation fees apply as per destination country customs au
         } else {
           setExtractionMode("failed");
           setIsProcessing(false);
+          setAiFailureReason(
+            (prev) => prev || offlineResult.reason || "AI extraction failed and document structure could not be parsed offline. You can retry with a different model or review/enter manually."
+          );
         }
       } catch (offlineErr: any) {
         setExtractionMode("failed");
         setIsProcessing(false);
+        setAiFailureReason(`Offline parsing error: ${offlineErr.message || "Failed to process file content"}`);
       }
     }
   };
@@ -979,6 +983,39 @@ Customs clearance documentation fees apply as per destination country customs au
               </div>
               <span className="text-[10px] text-stone-400">Configured in Settings</span>
             </div>
+
+            {/* AI Extraction Failure or Notice Banner */}
+            {aiFailureReason && (
+              <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-950 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-rose-800">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Extraction Notice</span>
+                </div>
+                <p className="text-xs text-rose-700 leading-relaxed font-mono bg-white/60 p-2 rounded border border-rose-100 break-words">
+                  {aiFailureReason}
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleStartExtraction}
+                    className="px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-2xs"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Extraction</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtractionMode("manual");
+                      setCurrentStep("review");
+                    }}
+                    className="px-3 py-1.5 bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 text-xs font-semibold rounded-lg transition-colors"
+                  >
+                    Open Review Form Manually
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Submit button */}
             <button

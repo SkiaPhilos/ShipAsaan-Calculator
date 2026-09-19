@@ -1,5 +1,7 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
+import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -19,6 +21,563 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
+// ==========================================
+// AUTHENTICATION, SIGNUP, APPROVALS & MAILER
+// ==========================================
+interface ServerUser {
+  id: string;
+  fullName: string;
+  email: string;
+  username: string;
+  password: string;
+  role: "admin" | "operator" | "auditor";
+  department?: string;
+  status: "pending_approval" | "active" | "rejected";
+  createdAt: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  lastLoginAttempt?: string;
+  lastLoginStatus?: string;
+}
+
+interface ServerLoginAttempt {
+  id: string;
+  emailOrUsername: string;
+  timestamp: string;
+  status: "SUCCESS_ADMIN" | "SUCCESS_USER" | "BLOCKED_PENDING_APPROVAL" | "BLOCKED_REJECTED" | "FAILED_CREDENTIALS" | "SIGNUP_PENDING_APPROVAL";
+  details: string;
+  ip?: string;
+  userAgent?: string;
+}
+
+interface ServerAdminNotification {
+  id: string;
+  type: "USER_SIGNUP_ALERT" | "USER_APPROVED_ALERT" | "SECURITY_ALERT";
+  to: string;
+  from: string;
+  subject: string;
+  body: string;
+  timestamp: string;
+  deliveredVia: "smtp" | "system_mailer";
+  read: boolean;
+  metadata?: Record<string, any>;
+}
+
+const AUTH_STORE_PATH = path.join(process.cwd(), "data", "auth_store.json");
+
+let authStore: {
+  users: ServerUser[];
+  loginAttempts: ServerLoginAttempt[];
+  notifications: ServerAdminNotification[];
+} = {
+  users: [],
+  loginAttempts: [],
+  notifications: [],
+};
+
+// Initialize persistent auth store
+try {
+  const dataDir = path.join(process.cwd(), "data");
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  if (fs.existsSync(AUTH_STORE_PATH)) {
+    const raw = fs.readFileSync(AUTH_STORE_PATH, "utf-8");
+    authStore = JSON.parse(raw);
+    if (!Array.isArray(authStore.users)) authStore.users = [];
+    if (!Array.isArray(authStore.loginAttempts)) authStore.loginAttempts = [];
+    if (!Array.isArray(authStore.notifications)) authStore.notifications = [];
+  } else {
+    fs.writeFileSync(AUTH_STORE_PATH, JSON.stringify(authStore, null, 2), "utf-8");
+  }
+} catch (err) {
+  console.warn("Could not load auth_store.json, using in-memory store:", err);
+}
+
+function saveAuthStore() {
+  try {
+    const dataDir = path.join(process.cwd(), "data");
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    fs.writeFileSync(AUTH_STORE_PATH, JSON.stringify(authStore, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to persist auth_store.json:", err);
+  }
+}
+
+// Mailer: Dispatches email to the Admin (SMTP if configured, plus System Mailer notification record)
+async function sendAdminNotificationEmail(
+  subject: string,
+  bodyText: string,
+  metadata?: Record<string, any>
+): Promise<{ sent: boolean; method: string; error?: string }> {
+  const adminEmail = (process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com").trim();
+  const fromEmail = (process.env.SMTP_FROM || "notifications@shipasaan.com").trim();
+
+  const record: ServerAdminNotification = {
+    id: `mail-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    type: "USER_SIGNUP_ALERT",
+    to: adminEmail,
+    from: fromEmail,
+    subject,
+    body: bodyText,
+    timestamp: new Date().toISOString(),
+    deliveredVia: "system_mailer",
+    read: false,
+    metadata,
+  };
+
+  // Try real SMTP if configured
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: Number(process.env.SMTP_PORT) === 465,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+
+      await transporter.sendMail({
+        from: fromEmail,
+        to: adminEmail,
+        subject,
+        text: bodyText,
+      });
+
+      record.deliveredVia = "smtp";
+      authStore.notifications.unshift(record);
+      saveAuthStore();
+      console.log(`[MAILER] SMTP Email successfully dispatched to admin: ${adminEmail}`);
+      return { sent: true, method: "smtp" };
+    } catch (smtpErr: any) {
+      console.warn(`[MAILER] SMTP send failed (${smtpErr.message}), falling back to system mailer log.`);
+    }
+  }
+
+  // System Mailer (always records into notifications queue & console)
+  authStore.notifications.unshift(record);
+  saveAuthStore();
+
+  console.log(`\n========================================================`);
+  console.log(`[SHIP ASAAN SYSTEM MAILER - ADMIN EMAIL DISPATCHED]`);
+  console.log(`To: ${adminEmail}`);
+  console.log(`Subject: ${subject}`);
+  console.log(`Time: ${record.timestamp}`);
+  console.log(`Body:\n${bodyText}`);
+  console.log(`========================================================\n`);
+
+  return { sent: true, method: "system_mailer" };
+}
+
+// 1. User Login Route
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { emailOrUsername, password } = req.body || {};
+    const inputId = (emailOrUsername || "").trim().toLowerCase();
+    const inputPass = (password || "").trim();
+
+    const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0] || req.ip || "127.0.0.1";
+    const userAgent = req.headers["user-agent"] || "Browser";
+
+    if (!inputId || !inputPass) {
+      return res.status(400).json({ ok: false, error: "Please provide both username/email and password." });
+    }
+
+    // Admin Credentials from Environment Variables
+    const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com").trim().toLowerCase();
+    const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "Philos@2006").trim();
+
+    const isAdminIdentifier =
+      inputId === ADMIN_EMAIL ||
+      inputId === "skyler" ||
+      inputId === ADMIN_EMAIL.split("@")[0];
+
+    // Check Root Admin Match
+    if (isAdminIdentifier && inputPass === ADMIN_PASSWORD) {
+      const attempt: ServerLoginAttempt = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        emailOrUsername: inputId,
+        timestamp: new Date().toISOString(),
+        status: "SUCCESS_ADMIN",
+        details: `Administrator session authenticated via secure environment variables.`,
+        ip: clientIp,
+        userAgent,
+      };
+      authStore.loginAttempts.unshift(attempt);
+      saveAuthStore();
+
+      return res.json({
+        ok: true,
+        user: {
+          id: "usr-admin-root",
+          username: "skyler",
+          fullName: "Skyler — Logistics Director",
+          email: process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com",
+          role: "admin",
+          status: "active",
+          createdAt: "2026-08-01T09:00:00Z",
+        },
+      });
+    }
+
+    // If identifier was admin but password wrong
+    if (isAdminIdentifier && inputPass !== ADMIN_PASSWORD) {
+      const attempt: ServerLoginAttempt = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        emailOrUsername: inputId,
+        timestamp: new Date().toISOString(),
+        status: "FAILED_CREDENTIALS",
+        details: `Invalid password supplied for Administrator account (${inputId}).`,
+        ip: clientIp,
+        userAgent,
+      };
+      authStore.loginAttempts.unshift(attempt);
+      saveAuthStore();
+
+      return res.status(401).json({
+        ok: false,
+        error: "Invalid administrator credentials. Please check your password.",
+      });
+    }
+
+    // Check Registered Users
+    const user = authStore.users.find(
+      (u) => u.email.toLowerCase() === inputId || u.username.toLowerCase() === inputId
+    );
+
+    if (!user) {
+      const attempt: ServerLoginAttempt = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        emailOrUsername: inputId,
+        timestamp: new Date().toISOString(),
+        status: "FAILED_CREDENTIALS",
+        details: `No account exists with username or email "${inputId}".`,
+        ip: clientIp,
+        userAgent,
+      };
+      authStore.loginAttempts.unshift(attempt);
+      saveAuthStore();
+
+      return res.status(401).json({
+        ok: false,
+        error: "No account found matching this email or username. Please check or sign up.",
+      });
+    }
+
+    // Verify Password
+    if (user.password !== inputPass) {
+      user.lastLoginAttempt = new Date().toISOString();
+      user.lastLoginStatus = "FAILED_CREDENTIALS";
+
+      const attempt: ServerLoginAttempt = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        emailOrUsername: inputId,
+        timestamp: new Date().toISOString(),
+        status: "FAILED_CREDENTIALS",
+        details: `Incorrect password attempt for user ${user.fullName} (${user.email}).`,
+        ip: clientIp,
+        userAgent,
+      };
+      authStore.loginAttempts.unshift(attempt);
+      saveAuthStore();
+
+      return res.status(401).json({
+        ok: false,
+        error: "Invalid password. Please try again or request a password reset.",
+      });
+    }
+
+    // User is found and password matches -> Check Status
+    if (user.status === "pending_approval") {
+      user.lastLoginAttempt = new Date().toISOString();
+      user.lastLoginStatus = "BLOCKED_PENDING_APPROVAL";
+
+      const attempt: ServerLoginAttempt = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        emailOrUsername: inputId,
+        timestamp: new Date().toISOString(),
+        status: "BLOCKED_PENDING_APPROVAL",
+        details: `Login blocked: User ${user.fullName} (${user.email}) is awaiting Administrator approval.`,
+        ip: clientIp,
+        userAgent,
+      };
+      authStore.loginAttempts.unshift(attempt);
+      saveAuthStore();
+
+      return res.status(403).json({
+        ok: false,
+        status: "pending_approval",
+        error: "Your account is currently pending administrator approval. An email notification has been dispatched to the administrator. You will be granted access once your account is approved.",
+      });
+    }
+
+    if (user.status === "rejected") {
+      user.lastLoginAttempt = new Date().toISOString();
+      user.lastLoginStatus = "BLOCKED_REJECTED";
+
+      const attempt: ServerLoginAttempt = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        emailOrUsername: inputId,
+        timestamp: new Date().toISOString(),
+        status: "BLOCKED_REJECTED",
+        details: `Login blocked: User ${user.fullName} (${user.email}) registration was declined.`,
+        ip: clientIp,
+        userAgent,
+      };
+      authStore.loginAttempts.unshift(attempt);
+      saveAuthStore();
+
+      return res.status(403).json({
+        ok: false,
+        status: "rejected",
+        error: "Your account registration has been declined by the system administrator.",
+      });
+    }
+
+    // Approved / Active User
+    user.lastLoginAttempt = new Date().toISOString();
+    user.lastLoginStatus = "SUCCESS_USER";
+
+    const attempt: ServerLoginAttempt = {
+      id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      emailOrUsername: inputId,
+      timestamp: new Date().toISOString(),
+      status: "SUCCESS_USER",
+      details: `User ${user.fullName} (${user.email}) logged in successfully.`,
+      ip: clientIp,
+      userAgent,
+    };
+    authStore.loginAttempts.unshift(attempt);
+    saveAuthStore();
+
+    const { password: _, ...sanitizedUser } = user;
+    return res.json({
+      ok: true,
+      user: sanitizedUser,
+    });
+  } catch (err: any) {
+    console.error("Login route error:", err);
+    return res.status(500).json({ ok: false, error: "Internal server error during authentication." });
+  }
+});
+
+// 2. User Signup Route
+app.post("/api/auth/signup", async (req, res) => {
+  try {
+    const { fullName, email, username, password, department, role } = req.body || {};
+
+    const cleanFullName = (fullName || "").trim();
+    const cleanEmail = (email || "").trim().toLowerCase();
+    const cleanUsername = (username || "").trim().toLowerCase();
+    const cleanPassword = (password || "").trim();
+    const cleanDept = (department || "Operations").trim();
+
+    const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0] || req.ip || "127.0.0.1";
+    const userAgent = req.headers["user-agent"] || "Browser";
+
+    if (!cleanFullName || !cleanEmail || !cleanUsername || !cleanPassword) {
+      return res.status(400).json({
+        ok: false,
+        error: "All fields (Full Name, Email, Username, and Password) are required.",
+      });
+    }
+
+    if (cleanPassword.length < 6) {
+      return res.status(400).json({
+        ok: false,
+        error: "Password must be at least 6 characters long.",
+      });
+    }
+
+    const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com").trim().toLowerCase();
+    if (cleanEmail === ADMIN_EMAIL || cleanUsername === "skyler") {
+      return res.status(400).json({
+        ok: false,
+        error: "This email address and username are reserved for primary system administration.",
+      });
+    }
+
+    // Check duplicate email or username
+    const existingEmail = authStore.users.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (existingEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "An account with this email address already exists. Please sign in instead.",
+      });
+    }
+
+    const existingUsername = authStore.users.find((u) => u.username.toLowerCase() === cleanUsername);
+    if (existingUsername) {
+      return res.status(400).json({
+        ok: false,
+        error: "This username is already taken. Please choose another username.",
+      });
+    }
+
+    // Create New User in Pending Approval State
+    const newUser: ServerUser = {
+      id: `usr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      fullName: cleanFullName,
+      email: cleanEmail,
+      username: cleanUsername,
+      password: cleanPassword,
+      role: (role === "admin" ? "operator" : role) || "operator",
+      department: cleanDept,
+      status: "pending_approval",
+      createdAt: new Date().toISOString(),
+      lastLoginAttempt: "Signup submitted",
+      lastLoginStatus: "PENDING_APPROVAL",
+    };
+
+    authStore.users.push(newUser);
+
+    // Record login attempt / signup audit
+    const attempt: ServerLoginAttempt = {
+      id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      emailOrUsername: cleanEmail,
+      timestamp: new Date().toISOString(),
+      status: "SIGNUP_PENDING_APPROVAL",
+      details: `New account signup submitted by ${newUser.fullName} (@${newUser.username}). Status: Pending Approval.`,
+      ip: clientIp,
+      userAgent,
+    };
+    authStore.loginAttempts.unshift(attempt);
+
+    // Send Mail Notification to Admin
+    const mailSubject = `🔔 [Ship Asaan] New User Signup Request: ${newUser.fullName} (${newUser.email})`;
+    const mailBody = `Hello Administrator,\n\nA new user has registered for access to the Ship Asaan Tariff Intelligence System and is awaiting your approval.\n\nUser Profile Details:\n• Full Name: ${newUser.fullName}\n• Email Address: ${newUser.email}\n• Username: @${newUser.username}\n• Department: ${newUser.department}\n• Assigned Role: ${newUser.role}\n• Registered At: ${newUser.createdAt}\n• Current Status: PENDING APPROVAL\n\nSecurity Notice:\nThis account is locked in an unapproved state and CANNOT log in or view tariffs until you approve it.\n\nAction Required:\n1. Log in to Ship Asaan as Administrator\n2. Open Settings -> Access Control & User Management\n3. Locate ${newUser.fullName} in "Pending Account Approvals" and click "Approve Account"\n\nShip Asaan Automated Security Engine`;
+
+    await sendAdminNotificationEmail(mailSubject, mailBody, {
+      userId: newUser.id,
+      fullName: newUser.fullName,
+      email: newUser.email,
+      username: newUser.username,
+      role: newUser.role,
+    });
+
+    saveAuthStore();
+
+    const { password: _, ...sanitizedUser } = newUser;
+    return res.status(201).json({
+      ok: true,
+      message: "Your account has been created and is currently awaiting administrator approval. A notification email has been dispatched to the administrator.",
+      user: sanitizedUser,
+    });
+  } catch (err: any) {
+    console.error("Signup route error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to register user account." });
+  }
+});
+
+// 3. Admin: Get all users & summary
+app.get("/api/admin/users", (_req, res) => {
+  const sanitizedUsers = authStore.users.map(({ password: _, ...u }) => u);
+  const pendingCount = sanitizedUsers.filter((u) => u.status === "pending_approval").length;
+  const activeCount = sanitizedUsers.filter((u) => u.status === "active").length;
+
+  res.json({
+    ok: true,
+    adminEmail: process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com",
+    users: sanitizedUsers,
+    pendingCount,
+    activeCount,
+  });
+});
+
+// 4. Admin: Approve or Reject a user
+app.post("/api/admin/approve-user", async (req, res) => {
+  try {
+    const { userId, approved } = req.body || {};
+    if (!userId) {
+      return res.status(400).json({ ok: false, error: "userId is required." });
+    }
+
+    const user = authStore.users.find((u) => u.id === userId);
+    if (!user) {
+      return res.status(404).json({ ok: false, error: "User not found." });
+    }
+
+    const adminEmail = (process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com").trim();
+    user.status = approved ? "active" : "rejected";
+    user.approvedAt = new Date().toISOString();
+    user.approvedBy = adminEmail;
+
+    // Send confirmation email record
+    const statusLabel = approved ? "APPROVED" : "DECLINED";
+    const mailSubject = `${approved ? "✅" : "🚫"} [Ship Asaan] User Account ${statusLabel}: ${user.fullName} (${user.email})`;
+    const mailBody = `Hello,\n\nThe user account for ${user.fullName} (${user.email}, @${user.username}) has been ${statusLabel} by administrator ${adminEmail} on ${user.approvedAt}.\n\nAccess Status: ${user.status.toUpperCase()}\n\nShip Asaan Access Control Engine`;
+
+    await sendAdminNotificationEmail(mailSubject, mailBody, {
+      userId: user.id,
+      action: statusLabel,
+    });
+
+    saveAuthStore();
+
+    const { password: _, ...sanitizedUser } = user;
+    return res.json({
+      ok: true,
+      message: `User ${user.fullName} has been ${approved ? "approved and activated" : "declined"}.`,
+      user: sanitizedUser,
+    });
+  } catch (err: any) {
+    console.error("Approve user error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to update user approval status." });
+  }
+});
+
+// 5. Admin: Delete User
+app.post("/api/admin/delete-user", (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) {
+    return res.status(400).json({ ok: false, error: "userId is required." });
+  }
+  authStore.users = authStore.users.filter((u) => u.id !== userId);
+  saveAuthStore();
+  return res.json({ ok: true, message: "User deleted successfully." });
+});
+
+// 6. Admin: Get Login Attempts
+app.get("/api/admin/login-attempts", (_req, res) => {
+  res.json({
+    ok: true,
+    attempts: authStore.loginAttempts.slice(0, 100),
+  });
+});
+
+// 7. Admin: Get Email Notifications Log
+app.get("/api/admin/notifications", (_req, res) => {
+  res.json({
+    ok: true,
+    notifications: authStore.notifications.slice(0, 50),
+    unreadCount: authStore.notifications.filter((n) => !n.read).length,
+  });
+});
+
+// 8. Admin: Mark Notification Read
+app.post("/api/admin/notifications/mark-read", (req, res) => {
+  const { id } = req.body || {};
+  if (id) {
+    const notif = authStore.notifications.find((n) => n.id === id);
+    if (notif) notif.read = true;
+  } else {
+    authStore.notifications.forEach((n) => (n.read = true));
+  }
+  saveAuthStore();
+  res.json({ ok: true });
+});
+
+// 9. Admin: Clear Security Logs
+app.post("/api/admin/clear-logs", (_req, res) => {
+  authStore.loginAttempts = [];
+  saveAuthStore();
+  res.json({ ok: true, message: "Login attempts audit cleared." });
+});
+
 // Lazy GoogleGenAI client
 let geminiClient: GoogleGenAI | null = null;
 function getGeminiClient(customApiKey?: string): GoogleGenAI {
@@ -27,6 +586,184 @@ function getGeminiClient(customApiKey?: string): GoogleGenAI {
     throw new Error("GEMINI_API_KEY is not configured on the server or provided by client.");
   }
   return new GoogleGenAI({ apiKey });
+}
+
+/**
+ * Universal AI Model Normalizer:
+ * Handles shorthand versions (e.g. "3.7", "3.6", "3.5", "3.8", "3.1"),
+ * space-delimited formats (e.g. "gemini 3.7 flash" -> "gemini-3.7-flash"),
+ * provider-specific aliases, and future custom models (e.g. "gemini-3.9-flash").
+ */
+function normalizeAIModel(provider: string, rawModel?: string): string {
+  let m = (rawModel || "").trim();
+  if (provider === "gemini") {
+    if (!m) return "gemini-3.8-flash";
+    if (m.startsWith("models/")) m = m.replace("models/", "");
+    const lower = m.toLowerCase();
+
+    // Direct matches & shorthands for 3.7, 3.6, 3.5, 3.8, 3.1, 2.5
+    if (
+      lower === "3.7" ||
+      lower === "3.7-flash" ||
+      lower === "3.7 flash" ||
+      lower === "gemini-3.7" ||
+      lower === "gemini 3.7" ||
+      lower === "gemini 3.7 flash" ||
+      lower === "gemini-3.7-flash"
+    ) {
+      return "gemini-3.7-flash";
+    }
+    if (
+      lower === "3.6" ||
+      lower === "3.6-flash" ||
+      lower === "3.6 flash" ||
+      lower === "gemini-3.6" ||
+      lower === "gemini 3.6" ||
+      lower === "gemini 3.6 flash" ||
+      lower === "gemini-3.6-flash"
+    ) {
+      return "gemini-3.6-flash";
+    }
+    if (
+      lower === "3.5" ||
+      lower === "3.5-flash" ||
+      lower === "3.5 flash" ||
+      lower === "gemini-3.5" ||
+      lower === "gemini 3.5" ||
+      lower === "gemini 3.5 flash" ||
+      lower === "gemini-3.5-flash"
+    ) {
+      return "gemini-3.5-flash";
+    }
+    if (
+      lower === "3.5-lite" ||
+      lower === "3.5 lite" ||
+      lower === "3.5-flash-lite" ||
+      lower === "3.5 flash lite" ||
+      lower === "gemini-3.5-flash-lite" ||
+      lower === "gemini 3.5 flash lite"
+    ) {
+      return "gemini-3.5-flash-lite";
+    }
+    if (
+      lower === "3.8" ||
+      lower === "3.8-flash" ||
+      lower === "3.8 flash" ||
+      lower === "gemini-3.8" ||
+      lower === "gemini 3.8" ||
+      lower === "gemini 3.8 flash" ||
+      lower === "gemini-3.8-flash"
+    ) {
+      return "gemini-3.8-flash";
+    }
+    if (
+      lower === "3.1" ||
+      lower === "3.1 pro" ||
+      lower === "gemini 3.1" ||
+      lower === "gemini 3.1 pro" ||
+      lower === "gemini-3.1" ||
+      lower === "gemini-3.1-pro" ||
+      lower === "gemini-3.1-pro-preview"
+    ) {
+      return "gemini-3.1-pro-preview";
+    }
+    if (
+      lower === "3.1 lite" ||
+      lower === "3.1 flash lite" ||
+      lower === "gemini 3.1 lite" ||
+      lower === "gemini 3.1 flash lite" ||
+      lower === "gemini-3.1-flash-lite" ||
+      lower === "gemini-3.1-flash-lite-preview"
+    ) {
+      return "gemini-3.1-flash-lite";
+    }
+    if (
+      lower === "2.5" ||
+      lower === "2.5 flash" ||
+      lower === "gemini 2.5" ||
+      lower === "gemini 2.5 flash" ||
+      lower === "gemini-2.5" ||
+      lower === "gemini-2.5-flash"
+    ) {
+      return "gemini-2.5-flash";
+    }
+    if (lower === "2.5 pro" || lower === "gemini 2.5 pro" || lower === "gemini-2.5-pro") {
+      return "gemini-2.5-pro";
+    }
+    if (lower === "flash" || lower === "gemini flash" || lower === "gemini-flash") {
+      return "gemini-3.8-flash";
+    }
+    if (lower === "pro" || lower === "gemini pro" || lower === "gemini-pro") {
+      return "gemini-3.1-pro-preview";
+    }
+
+    // Convert spaces to hyphens (e.g. "gemini 3.9 flash" -> "gemini-3.9-flash")
+    if (m.includes(" ")) {
+      m = m.toLowerCase().replace(/\s+/g, "-");
+    }
+    // If entered as e.g. "3.9-flash" or "3.9", prepend "gemini-"
+    if (/^\d/.test(m)) {
+      m = `gemini-${m}`;
+      if (!m.includes("flash") && !m.includes("pro")) {
+        m = `${m}-flash`;
+      }
+    }
+    return m;
+  }
+
+  if (provider === "anthropic") {
+    const lower = m.toLowerCase();
+    if (
+      lower === "3.7" ||
+      lower === "claude 3.7" ||
+      lower === "claude 3.7 sonnet" ||
+      lower === "3.7 sonnet" ||
+      lower === "claude-3.7-sonnet" ||
+      lower === "claude-3-7-sonnet"
+    ) {
+      return "claude-3-7-sonnet-20250219";
+    }
+    if (
+      lower === "3.5" ||
+      lower === "claude 3.5" ||
+      lower === "claude 3.5 sonnet" ||
+      lower === "3.5 sonnet" ||
+      lower === "claude-3.5-sonnet"
+    ) {
+      return "claude-3-5-sonnet-20241022";
+    }
+    if (lower === "haiku" || lower === "claude haiku" || lower === "claude 3.5 haiku" || lower === "claude-3-5-haiku") {
+      return "claude-3-5-haiku-20241022";
+    }
+    return m.replace(/\s+/g, "-");
+  }
+
+  if (provider === "openai") {
+    const lower = m.toLowerCase();
+    if (lower === "4o" || lower === "gpt 4o" || lower === "gpt-4") return "gpt-4o";
+    if (lower === "4o mini" || lower === "gpt 4o mini") return "gpt-4o-mini";
+    if (lower === "o3" || lower === "o3 mini") return "o3-mini";
+    if (lower === "o4" || lower === "o4 mini") return "o4-mini";
+    if (lower === "5.4" || lower === "gpt 5.4") return "gpt-5.4";
+    if (lower === "5.5" || lower === "gpt 5.5") return "gpt-5.5";
+    return m.replace(/\s+/g, "-");
+  }
+
+  if (provider === "deepseek") {
+    const lower = m.toLowerCase();
+    if (lower === "chat" || lower === "v3" || lower === "deepseek") return "deepseek-chat";
+    if (lower === "reasoner" || lower === "r1") return "deepseek-reasoner";
+    return m.replace(/\s+/g, "-");
+  }
+
+  if (provider === "groq") {
+    const lower = m.toLowerCase();
+    if (lower === "llama" || lower === "llama 3.3" || lower === "llama 70b") return "llama-3.3-70b-versatile";
+    if (lower === "deepseek r1" || lower === "r1") return "deepseek-r1-distill-llama-70b";
+    return m.replace(/\s+/g, "-");
+  }
+
+  return m;
 }
 
 // ==========================================
@@ -42,16 +779,7 @@ app.post("/api/ai/test-connection", async (req, res) => {
     const customModel = body.customModel;
     const customAuthHeader = body.customAuthHeader;
 
-    let targetModel = (model === "custom" ? customModel : model) || "";
-
-    // Auto-normalize known user shorthand
-    if (provider === "gemini") {
-      if (!targetModel || targetModel === "gemini flash") targetModel = "gemini-3.8-flash";
-      else if (targetModel === "gemini 3.6" || targetModel === "gemini-3.6" || targetModel === "gemini 3.6 flash") targetModel = "gemini-3.6-flash";
-      else if (targetModel === "gemini 3.8" || targetModel === "gemini-3.8") targetModel = "gemini-3.8-flash";
-      else if (targetModel === "gemini 2.5" || targetModel === "gemini-2.5") targetModel = "gemini-2.5-flash";
-      else if (targetModel === "gemini pro") targetModel = "gemini-3.1-pro-preview";
-    }
+    let targetModel = normalizeAIModel(provider, model === "custom" ? customModel : model);
 
     const startTime = Date.now();
 
@@ -66,18 +794,48 @@ app.post("/api/ai/test-connection", async (req, res) => {
       const ai = getGeminiClient(activeKey);
       const chosenModel = targetModel || "gemini-3.8-flash";
       
-      const response = await ai.models.generateContent({
-        model: chosenModel,
-        contents: "Respond with the single word 'OK' if you can read this.",
-      });
+      let response: any = null;
+      let finalUsedModel = chosenModel;
+
+      try {
+        response = await ai.models.generateContent({
+          model: chosenModel,
+          contents: "Respond with the single word 'OK' if you can read this.",
+        });
+      } catch (err: any) {
+        const is503 = (err.status === 503 || err.code === 503 || String(err.message || "").includes("503") || String(err.message || "").includes("high demand") || String(err.message || "").includes("UNAVAILABLE"));
+        if (is503) {
+          // Retry once after 1 second
+          await new Promise(r => setTimeout(r, 1000));
+          try {
+            response = await ai.models.generateContent({
+              model: chosenModel,
+              contents: "Respond with the single word 'OK' if you can read this.",
+            });
+          } catch (retryErr: any) {
+            // If primary model has 503 spike, verify API key with gemini-3.1-flash-lite
+            const fallbackModel = "gemini-3.1-flash-lite";
+            response = await ai.models.generateContent({
+              model: fallbackModel,
+              contents: "Respond with the single word 'OK' if you can read this.",
+            });
+            finalUsedModel = fallbackModel;
+          }
+        } else {
+          throw err;
+        }
+      }
 
       const latencyMs = Date.now() - startTime;
       return res.json({
         ok: true,
         provider: "Google Gemini",
         model: chosenModel,
+        effectiveModel: finalUsedModel,
         latencyMs,
-        message: `Successfully connected to ${chosenModel} (${latencyMs}ms response). Connection verified.`,
+        message: finalUsedModel !== chosenModel
+          ? `Connected successfully! (${chosenModel} experienced a temporary Google 503 spike; verified via ${finalUsedModel} in ${latencyMs}ms).`
+          : `Successfully connected to ${chosenModel} (${latencyMs}ms response). Connection verified.`,
         sampleResponse: response.text?.trim()
       });
     }
@@ -326,18 +1084,11 @@ app.post("/api/ai/extract-tariff", async (req, res) => {
       custom: "custom-model",
     };
 
-    let targetModel = (
+    let rawModelInput = (
       providerConfig?.model === "custom" ? providerConfig?.customModel : providerConfig?.model
     )?.trim() || defaultModelForProvider[provider] || "gemini-3.8-flash";
 
-    // Auto-resolve common shorthand phrases to standard identifiers
-    if (provider === "gemini") {
-      const lower = targetModel.toLowerCase();
-      if (lower === "gemini flash" || lower === "flash") targetModel = "gemini-3.8-flash";
-      else if (lower === "gemini 3.8" || lower === "gemini-3.8" || lower === "gemini 3.8 flash") targetModel = "gemini-3.8-flash";
-      else if (lower === "gemini 3.6" || lower === "gemini-3.6" || lower === "gemini 3.6 flash") targetModel = "gemini-3.6-flash";
-      else if (lower === "gemini 2.5" || lower === "gemini-2.5" || lower === "gemini 2.5 flash") targetModel = "gemini-2.5-flash";
-    }
+    let targetModel = normalizeAIModel(provider, rawModelInput);
 
     // Check if input is a base64 Data URL (e.g. image, PDF, or spreadsheet)
     let isDataUrl = false;
@@ -552,17 +1303,82 @@ Return ONLY valid, parseable JSON. Do NOT include markdown code blocks or backti
       }
       parts.push({ text: `${systemPrompt}\n\n${userTextPrompt}` });
 
-      const response = await ai.models.generateContent({
-        model: targetModel,
-        contents: [
-          { role: "user", parts }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          maxOutputTokens: 16384
+      let response: any = null;
+      let effectiveModel = targetModel;
+
+      try {
+        response = await ai.models.generateContent({
+          model: targetModel,
+          contents: [
+            { role: "user", parts }
+          ],
+          config: {
+            responseMimeType: "application/json",
+            maxOutputTokens: 16384
+          }
+        });
+      } catch (primaryErr: any) {
+        const is503 = (
+          primaryErr.status === 503 ||
+          primaryErr.code === 503 ||
+          String(primaryErr.message || "").includes("503") ||
+          String(primaryErr.message || "").includes("high demand") ||
+          String(primaryErr.message || "").includes("UNAVAILABLE")
+        );
+
+        if (is503) {
+          console.warn(`[server.ts] Model ${targetModel} encountered temporary 503 high demand spike. Retrying...`);
+          await new Promise(r => setTimeout(r, 1200));
+          try {
+            response = await ai.models.generateContent({
+              model: targetModel,
+              contents: [{ role: "user", parts }],
+              config: {
+                responseMimeType: "application/json",
+                maxOutputTokens: 16384
+              }
+            });
+          } catch (retryErr: any) {
+            // If primary model continues to suffer 503 spikes, attempt seamless fallback to alternative flash models
+            const fallbackCandidates = [
+              "gemini-3.1-flash-lite",
+              "gemini-3.5-flash",
+              "gemini-3.8-flash",
+              "gemini-3.7-flash",
+              "gemini-3.6-flash"
+            ].filter(m => m !== targetModel);
+
+            let fallbackSuccess = false;
+            for (const fbModel of fallbackCandidates) {
+              try {
+                console.warn(`[server.ts] Attempting fallback extraction with ${fbModel}...`);
+                response = await ai.models.generateContent({
+                  model: fbModel,
+                  contents: [{ role: "user", parts }],
+                  config: {
+                    responseMimeType: "application/json",
+                    maxOutputTokens: 16384
+                  }
+                });
+                effectiveModel = fbModel;
+                fallbackSuccess = true;
+                break;
+              } catch (fbErr) {
+                console.warn(`[server.ts] Fallback model ${fbModel} also unavailable, trying next...`);
+              }
+            }
+
+            if (!fallbackSuccess) {
+              throw primaryErr;
+            }
+          }
+        } else {
+          throw primaryErr;
         }
-      });
-      rawOutput = response.text || "";
+      }
+
+      rawOutput = response?.text || "";
+      targetModel = effectiveModel;
     } else if (
       provider === "openai" ||
       provider === "deepseek" ||
@@ -891,14 +1707,8 @@ app.post("/api/ai/copilot", async (req, res) => {
     const { query, workspace, contextData, providerConfig, history } = req.body;
     const provider = providerConfig?.provider || "gemini";
     const userApiKey = providerConfig?.apiKey;
-    let targetModel = (providerConfig?.model === "custom" ? providerConfig?.customModel : providerConfig?.model) || "gemini-3.8-flash";
-
-    if (provider === "gemini") {
-      if (!targetModel || targetModel === "gemini flash") targetModel = "gemini-3.8-flash";
-      else if (targetModel === "gemini 3.6" || targetModel === "gemini-3.6" || targetModel === "gemini 3.6 flash") targetModel = "gemini-3.6-flash";
-      else if (targetModel === "gemini 3.8" || targetModel === "gemini-3.8") targetModel = "gemini-3.8-flash";
-      else if (targetModel === "gemini 2.5" || targetModel === "gemini-2.5") targetModel = "gemini-2.5-flash";
-    }
+    const rawModel = (providerConfig?.model === "custom" ? providerConfig?.customModel : providerConfig?.model) || "gemini-3.8-flash";
+    let targetModel = normalizeAIModel(provider, rawModel);
 
     const systemInstruction = `You are Ship Asaan's Tariff Intelligence & Logistics AI Copilot.
 You have access to the user's active local tariff database, carrier partners, document library, and recent rate calculations for the ${workspace === "domestic" ? "DOMESTIC (Pakistan COD)" : "INTERNATIONAL"} logistics workspace.
@@ -939,18 +1749,63 @@ ${JSON.stringify(contextData || {}, null, 2)}
         parts: [{ text: query }]
       });
 
-      const response = await ai.models.generateContent({
-        model: targetModel,
-        contents: conversationContents,
-        config: {
-          systemInstruction: systemInstruction,
+      let response: any = null;
+      let effectiveModel = targetModel;
+      try {
+        response = await ai.models.generateContent({
+          model: targetModel,
+          contents: conversationContents,
+          config: {
+            systemInstruction: systemInstruction,
+          }
+        });
+      } catch (err: any) {
+        const is503 = (
+          err.status === 503 ||
+          err.code === 503 ||
+          String(err.message || "").includes("503") ||
+          String(err.message || "").includes("high demand") ||
+          String(err.message || "").includes("UNAVAILABLE")
+        );
+        if (is503) {
+          console.warn(`[Copilot] 503 spike on model ${targetModel}, retrying...`);
+          await new Promise(r => setTimeout(r, 1000));
+          try {
+            response = await ai.models.generateContent({
+              model: targetModel,
+              contents: conversationContents,
+              config: {
+                systemInstruction: systemInstruction,
+              }
+            });
+          } catch (retryErr: any) {
+            const fallbackCandidates = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"].filter(m => m !== targetModel);
+            for (const fb of fallbackCandidates) {
+              try {
+                response = await ai.models.generateContent({
+                  model: fb,
+                  contents: conversationContents,
+                  config: {
+                    systemInstruction: systemInstruction,
+                  }
+                });
+                effectiveModel = fb;
+                break;
+              } catch (e) {
+                // try next
+              }
+            }
+            if (!response) throw err;
+          }
+        } else {
+          throw err;
         }
-      });
+      }
 
       return res.json({
         ok: true,
         answer: response.text || "No response text generated.",
-        modelUsed: targetModel,
+        modelUsed: effectiveModel,
         provider: "Google Gemini"
       });
     }

@@ -55,9 +55,14 @@ export default function App() {
     LocalStorageManager.getAIConfig()
   );
 
-  const [user, setUser] = useState<AppUser>(() => LocalStorageManager.getUser());
+  const [user, setUser] = useState<AppUser>(() => {
+    const logged = LocalStorageManager.getLoggedInUser();
+    if (logged) return logged;
+    return LocalStorageManager.getUser();
+  });
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
-    return LocalStorageManager.getLoggedInUser() !== null;
+    const logged = LocalStorageManager.getLoggedInUser();
+    return logged !== null && logged.status !== "pending_approval" && logged.status !== "rejected";
   });
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
@@ -393,7 +398,7 @@ export default function App() {
     setIsLoggedIn(false);
   };
 
-  if (!isLoggedIn) {
+  if (!isLoggedIn || user.status === "pending_approval" || user.status === "rejected") {
     return (
       <LoginView
         onLoginSuccess={(loggedInUser) => {

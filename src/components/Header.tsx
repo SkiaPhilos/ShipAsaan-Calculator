@@ -48,11 +48,11 @@ export const Header: React.FC<HeaderProps> = ({
   const isDomestic = activeWorkspace === "domestic";
 
   const currentUser: AppUser = user || {
-    id: "u-admin",
-    username: "skyler",
-    fullName: "Skyler Admin",
-    email: "skylerisbusy@gmail.com",
-    role: "admin",
+    id: "usr-guest",
+    username: "user",
+    fullName: "System User",
+    email: "user@shipasaan.com",
+    role: "operator",
     createdAt: new Date().toISOString(),
   };
 

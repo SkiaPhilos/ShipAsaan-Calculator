@@ -10,6 +10,8 @@ import {
   AIProviderConfig,
   AppUser,
   SecurityAuditRecord,
+  LoginAttemptRecord,
+  AdminEmailNotification,
 } from "../types";
 
 import {
@@ -41,6 +43,9 @@ const KEYS = {
 
   AI_CONFIG: "ship_asaan_ai_config",
   USER_PROFILE: "ship_asaan_user_profile",
+  USERS_LIST: "ship_asaan_users_list",
+  LOGIN_ATTEMPTS: "ship_asaan_login_attempts",
+  ADMIN_NOTIFICATIONS: "ship_asaan_admin_notifications",
   SECURITY_AUDIT_LOGS: "ship_asaan_security_audit_logs", // Protected key: preserved through normal data flushes
   ACTIVE_WORKSPACE: "ship_asaan_active_workspace",
 };
@@ -294,7 +299,7 @@ export class LocalStorageManager {
   }
 
   static getLoggedInUser(): AppUser | null {
-    return safeGet<AppUser | null>("ship_asaan_logged_in_user", initialUser);
+    return safeGet<AppUser | null>("ship_asaan_logged_in_user", null);
   }
   static setLoggedInUser(user: AppUser | null): void {
     if (!user) {
@@ -302,6 +307,69 @@ export class LocalStorageManager {
     } else {
       safeSet("ship_asaan_logged_in_user", user);
     }
+  }
+
+  // -------------------------------------------------------------
+  // USER ACCOUNTS & APPROVALS
+  // -------------------------------------------------------------
+  static getUsersList(): AppUser[] {
+    return safeGet<AppUser[]>(KEYS.USERS_LIST, [initialUser]);
+  }
+  static saveUsersList(users: AppUser[]): void {
+    safeSet(KEYS.USERS_LIST, users);
+  }
+  static addRegisteredUser(user: AppUser): void {
+    const list = this.getUsersList();
+    const existingIdx = list.findIndex(
+      (u) => u.email.toLowerCase() === user.email.toLowerCase() || u.username.toLowerCase() === user.username.toLowerCase()
+    );
+    if (existingIdx >= 0) {
+      list[existingIdx] = user;
+    } else {
+      list.push(user);
+    }
+    this.saveUsersList(list);
+  }
+  static updateUserStatus(userId: string, status: "active" | "pending_approval" | "rejected", approvedBy?: string): AppUser | null {
+    const list = this.getUsersList();
+    const idx = list.findIndex((u) => u.id === userId);
+    if (idx >= 0) {
+      list[idx] = {
+        ...list[idx],
+        status,
+        approvedAt: status === "active" ? new Date().toISOString() : undefined,
+        approvedBy: approvedBy || "System Admin",
+      };
+      this.saveUsersList(list);
+      return list[idx];
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------
+  // LOGIN ATTEMPTS AUDIT
+  // -------------------------------------------------------------
+  static getLoginAttempts(): LoginAttemptRecord[] {
+    return safeGet<LoginAttemptRecord[]>(KEYS.LOGIN_ATTEMPTS, []);
+  }
+  static addLoginAttempt(attempt: LoginAttemptRecord): void {
+    const list = this.getLoginAttempts();
+    safeSet(KEYS.LOGIN_ATTEMPTS, [attempt, ...list].slice(0, 100));
+  }
+
+  // -------------------------------------------------------------
+  // ADMIN NOTIFICATIONS (EMAIL DISPATCHES)
+  // -------------------------------------------------------------
+  static getAdminNotifications(): AdminEmailNotification[] {
+    return safeGet<AdminEmailNotification[]>(KEYS.ADMIN_NOTIFICATIONS, []);
+  }
+  static addAdminNotification(notif: AdminEmailNotification): void {
+    const list = this.getAdminNotifications();
+    safeSet(KEYS.ADMIN_NOTIFICATIONS, [notif, ...list].slice(0, 50));
+  }
+  static markNotificationRead(id: string): void {
+    const list = this.getAdminNotifications().map((n) => (n.id === id ? { ...n, read: true } : n));
+    safeSet(KEYS.ADMIN_NOTIFICATIONS, list);
   }
 
   static resetUserPassword(newPassword: string, username?: string): { success: boolean; message: string } {

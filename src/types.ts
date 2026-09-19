@@ -26,8 +26,37 @@ export interface AppUser {
   fullName: string;
   email: string;
   role: "admin" | "operator" | "auditor";
+  status?: "active" | "pending_approval" | "rejected";
+  department?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  lastLoginAttempt?: string;
+  lastLoginStatus?: string;
   password?: string; // stored for local desktop app verification
   createdAt: string;
+}
+
+export interface LoginAttemptRecord {
+  id: string;
+  emailOrUsername: string;
+  timestamp: string;
+  status: "SUCCESS_ADMIN" | "SUCCESS_USER" | "BLOCKED_PENDING_APPROVAL" | "BLOCKED_REJECTED" | "FAILED_CREDENTIALS" | "SIGNUP_PENDING_APPROVAL";
+  details: string;
+  ip?: string;
+  userAgent?: string;
+}
+
+export interface AdminEmailNotification {
+  id: string;
+  type: "USER_SIGNUP_ALERT" | "USER_APPROVED_ALERT" | "SECURITY_ALERT";
+  to: string;
+  from: string;
+  subject: string;
+  body: string;
+  timestamp: string;
+  deliveredVia: "smtp" | "system_mailer";
+  read: boolean;
+  metadata?: Record<string, any>;
 }
 
 export interface SecurityAuditRecord {
