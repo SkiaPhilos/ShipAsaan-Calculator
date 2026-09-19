@@ -32,7 +32,6 @@ export interface AppUser {
   approvedBy?: string;
   lastLoginAttempt?: string;
   lastLoginStatus?: string;
-  password?: string; // stored for local desktop app verification
   createdAt: string;
 }
 

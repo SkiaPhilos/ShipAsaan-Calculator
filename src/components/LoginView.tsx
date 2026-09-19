@@ -25,7 +25,6 @@ interface LoginViewProps {
 
 const env = (import.meta as any).env || {};
 const ADMIN_EMAIL = (env.VITE_ADMIN_EMAIL || env.ADMIN_EMAIL || "skylerisbusy@gmail.com").trim();
-const ADMIN_PASSWORD = (env.VITE_ADMIN_PASSWORD || env.ADMIN_PASSWORD || "Philos@2006").trim();
 
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -124,77 +123,13 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
       // Other authentication errors
       setLoginError(data.error || "Invalid username/email or password.");
-    } catch (netErr) {
-      console.warn("Server auth unreachable or static SPA mode, evaluating credentials:", netErr);
-
-      // 1. Root Administrator Authentication Fallback
-      const inputId = identifier.toLowerCase();
-      const adminEmailClean = ADMIN_EMAIL.toLowerCase();
-      const isAdminIdentifier =
-        inputId === adminEmailClean ||
-        inputId === "skyler" ||
-        inputId === adminEmailClean.split("@")[0];
-
-      if (isAdminIdentifier) {
-        if (pass === ADMIN_PASSWORD) {
-          const adminUser: AppUser = {
-            id: "usr-admin-root",
-            username: "skyler",
-            fullName: "Skyler — Logistics Director",
-            email: ADMIN_EMAIL,
-            role: "admin",
-            status: "active",
-            createdAt: "2026-08-01T09:00:00Z",
-          };
-          LocalStorageManager.setLoggedInUser(adminUser);
-          LocalStorageManager.addSecurityAuditLog({
-            action: "USER_LOGIN",
-            user: adminUser.username,
-            timestamp: new Date().toISOString(),
-            result: "Successful",
-            details: `Administrator ${adminUser.fullName} authenticated successfully.`,
-          });
-          onLoginSuccess(adminUser);
-          return;
-        } else {
-          setLoginError("Invalid password for Administrator account.");
-          return;
-        }
-      }
-
-      // 2. Client-side database check for registered users
-      const users = LocalStorageManager.getUsersList();
-      const localMatch = users.find(
-        (u) =>
-          (u.email.toLowerCase() === identifier.toLowerCase() ||
-            u.username.toLowerCase() === identifier.toLowerCase()) &&
-          (u.password === pass || (!u.password && pass === ADMIN_PASSWORD))
+    } catch (netErr: any) {
+      console.error("Authentication server request failed:", netErr);
+      setLoginError(
+        netErr.message && !netErr.message.includes("JSON")
+          ? netErr.message
+          : "Unable to reach the authentication server. Please verify your backend server deployment."
       );
-
-      if (localMatch) {
-        if (localMatch.status === "pending_approval") {
-          setIsPendingApprovalNotice(
-            `Your account is pending administrator approval. An email notification was sent to ${ADMIN_EMAIL}.`
-          );
-          return;
-        }
-        if (localMatch.status === "rejected") {
-          setLoginError("Your account registration has been declined.");
-          return;
-        }
-        LocalStorageManager.setLoggedInUser(localMatch);
-        LocalStorageManager.addSecurityAuditLog({
-          action: "USER_LOGIN",
-          user: localMatch.username,
-          timestamp: new Date().toISOString(),
-          result: "Successful",
-          details: `User ${localMatch.fullName} logged in.`,
-        });
-        onLoginSuccess(localMatch);
-        return;
-      }
-
-      setLoginError("Invalid email/username or password.");
     } finally {
       setIsLoggingIn(false);
     }
@@ -245,6 +180,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         }),
       });
 
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("Registration server returned an invalid response.");
+      }
+
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
@@ -253,7 +193,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         return;
       }
 
-      // Also persist to client-side store
+      // Also persist to client-side store (WITHOUT storing password)
       const newUser: AppUser = {
         id: data.user?.id || `usr-${Date.now()}`,
         fullName,
@@ -262,7 +202,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         role: signupRole,
         department: signupDepartment,
         status: "pending_approval",
-        password,
         createdAt: new Date().toISOString(),
         lastLoginAttempt: "Signup submitted",
         lastLoginStatus: "PENDING_APPROVAL",

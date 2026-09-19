@@ -24,7 +24,6 @@ export const initialUser: AppUser = {
   username: "skyler",
   fullName: "Skyler — Logistics Director",
   email: "skylerisbusy@gmail.com",
-  password: (typeof window !== "undefined" && (window as any).__ADMIN_PASS) || "Philos@2006",
   role: "admin",
   status: "active",
   createdAt: "2026-08-01T09:00:00Z",

@@ -1872,7 +1872,6 @@ async function startServer() {
     // In standard node, dist is in process.cwd(). In packaged desktop apps (Electron asar), it is next to __dirname.
     let distPath = path.join(process.cwd(), "dist");
     try {
-      const fs = require("fs");
       if (!fs.existsSync(distPath)) {
         distPath = path.join(__dirname, "dist");
       }
@@ -1894,4 +1893,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only start standalone server when not in a serverless environment (such as Vercel)
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
+export { app };

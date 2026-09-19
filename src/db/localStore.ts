@@ -372,9 +372,8 @@ export class LocalStorageManager {
     safeSet(KEYS.ADMIN_NOTIFICATIONS, list);
   }
 
-  static resetUserPassword(newPassword: string, username?: string): { success: boolean; message: string } {
+  static resetUserPassword(_newPassword: string, username?: string): { success: boolean; message: string } {
     const user = this.getUser();
-    user.password = newPassword;
     this.setUser(user);
     this.setLoggedInUser(user);
     this.addSecurityAuditLog({
