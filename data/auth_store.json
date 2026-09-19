@@ -2,6 +2,15 @@
   "users": [],
   "loginAttempts": [
     {
+      "id": "att-1789855234180-sium",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-19T22:00:34.180Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "curl/7.88.1"
+    },
+    {
       "id": "att-1789854729085-60je",
       "emailOrUsername": "skylerisbusy@gmail.com",
       "timestamp": "2026-09-19T21:52:09.085Z",
