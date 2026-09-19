@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import * as XLSX from "xlsx";
 import { parseInternationalMatrix } from "./src/engine/matrixParser";
@@ -15,6 +14,15 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Normalize req.url so Express routes match regardless of serverless rewrite alterations
+app.use((req, _res, next) => {
+  const orig = (req.originalUrl || (req.headers["x-matched-path"] as string) || req.url || "").split("?")[0];
+  if (orig.startsWith("/api") && !req.url.startsWith("/api")) {
+    req.url = orig + (req.url.includes("?") ? `?${req.url.split("?")[1]}` : "");
+  }
+  next();
+});
 
 // Health check endpoint for desktop packaging and diagnostics
 app.get("/api/health", (_req, res) => {
@@ -1863,6 +1871,7 @@ ${JSON.stringify(contextData || {}, null, 2)}
 // ==========================================
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
