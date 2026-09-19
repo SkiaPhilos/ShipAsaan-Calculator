@@ -75,34 +75,27 @@ let authStore: {
   notifications: [],
 };
 
-// Initialize persistent auth store
+// Initialize in-memory auth store (optional file cache only if data/ folder exists)
 try {
-  const dataDir = path.join(process.cwd(), "data");
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
   if (fs.existsSync(AUTH_STORE_PATH)) {
     const raw = fs.readFileSync(AUTH_STORE_PATH, "utf-8");
-    authStore = JSON.parse(raw);
-    if (!Array.isArray(authStore.users)) authStore.users = [];
-    if (!Array.isArray(authStore.loginAttempts)) authStore.loginAttempts = [];
-    if (!Array.isArray(authStore.notifications)) authStore.notifications = [];
-  } else {
-    fs.writeFileSync(AUTH_STORE_PATH, JSON.stringify(authStore, null, 2), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed.users)) authStore.users = parsed.users;
+    if (Array.isArray(parsed.loginAttempts)) authStore.loginAttempts = parsed.loginAttempts;
+    if (Array.isArray(parsed.notifications)) authStore.notifications = parsed.notifications;
   }
 } catch (err) {
-  console.warn("Could not load auth_store.json, using in-memory store:", err);
+  console.warn("Using in-memory auth store:", err);
 }
 
 function saveAuthStore() {
   try {
     const dataDir = path.join(process.cwd(), "data");
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
+    if (fs.existsSync(dataDir)) {
+      fs.writeFileSync(AUTH_STORE_PATH, JSON.stringify(authStore, null, 2), "utf-8");
     }
-    fs.writeFileSync(AUTH_STORE_PATH, JSON.stringify(authStore, null, 2), "utf-8");
   } catch (err) {
-    console.error("Failed to persist auth_store.json:", err);
+    // Silent in-memory fallback
   }
 }
 

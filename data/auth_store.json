@@ -1,0 +1,15 @@
+{
+  "users": [],
+  "loginAttempts": [
+    {
+      "id": "att-1789852187011-vxtr",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-19T21:09:47.011Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "curl/7.88.1"
+    }
+  ],
+  "notifications": []
+}

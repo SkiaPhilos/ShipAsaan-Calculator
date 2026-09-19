@@ -1417,7 +1417,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-xl text-xs space-y-1 text-purple-950">
                 <div className="flex items-center gap-2 font-bold">
                   <Mail className="w-4 h-4 text-purple-700" />
-                  <span>Outbound Email Dispatch Log to Admin ({process.env.ADMIN_EMAIL || "skylerisbusy@gmail.com"})</span>
+                  <span>Outbound Email Dispatch Log to Admin ({((import.meta as any).env?.VITE_ADMIN_EMAIL || "skylerisbusy@gmail.com")})</span>
                 </div>
                 <p className="text-[11px] text-purple-900 leading-relaxed">
                   Whenever a user signs up or requests approval, an automated alert email is generated and dispatched to the administrator. If SMTP credentials are configured in <code>.env</code>, messages are sent directly to the inbox; otherwise, they are archived in this secure system mailer log.
