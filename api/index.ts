@@ -4,11 +4,15 @@ import app from "../server";
 export const maxDuration = 60;
 
 export default function handler(req: any, res: any) {
-  // If rewritten by Vercel with __path query parameter
+  // 1. If Vercel passed the path via query parameter (__path or all)
   if (req.query?.__path) {
     const subPath = String(req.query.__path).replace(/^\/+/, "");
     delete req.query.__path;
     req.url = subPath ? `/api/${subPath}` : "/api";
+  } else if (req.query?.all) {
+    const parts = Array.isArray(req.query.all) ? req.query.all.join("/") : String(req.query.all);
+    delete req.query.all;
+    req.url = `/api/${parts.replace(/^\/+/, "")}`;
   } else {
     // In Vercel serverless functions, rewrites can change req.url to "/api" or "/api/index".
     // req.originalUrl or the x-matched-path / x-forwarded-url headers preserve the client's actual path.

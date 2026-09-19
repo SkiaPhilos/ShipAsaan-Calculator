@@ -85,7 +85,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
       const contentType = response.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
-        throw new Error("Server authentication endpoint returned non-JSON response.");
+        const rawText = await response.text();
+        const snippet = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+        throw new Error(`Authentication server returned HTTP ${response.status} (${response.statusText || "Error"}): ${snippet || "Non-JSON response"}`);
       }
 
       const data = await response.json();
@@ -182,7 +184,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
       const contentType = response.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
-        throw new Error("Registration server returned an invalid response.");
+        const rawText = await response.text();
+        const snippet = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+        throw new Error(`Registration server returned HTTP ${response.status} (${response.statusText || "Error"}): ${snippet || "Non-JSON response"}`);
       }
 
       const data = await response.json();
