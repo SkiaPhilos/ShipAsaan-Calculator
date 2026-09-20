@@ -2,6 +2,24 @@
   "users": [],
   "loginAttempts": [
     {
+      "id": "att-1789899036539-asw5",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-20T10:10:36.539Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "curl/7.88.1"
+    },
+    {
+      "id": "att-1789899029813-f8pq",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-20T10:10:29.813Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "node"
+    },
+    {
       "id": "att-1789889778318-ot5g",
       "emailOrUsername": "skylerisbusy@gmail.com",
       "timestamp": "2026-09-20T07:36:18.318Z",

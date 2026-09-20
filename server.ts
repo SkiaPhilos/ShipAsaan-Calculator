@@ -29,9 +29,17 @@ app.use((req, _res, next) => {
         req.url = `/api/${cleanSub}${qs ? `?${qs}` : ""}`;
       }
     } else {
-      const orig = (req.originalUrl || (req.headers["x-matched-path"] as string) || req.url || "").split("?")[0];
-      if (orig.startsWith("/api") && !req.url.startsWith("/api")) {
-        req.url = orig + (req.url.includes("?") ? `?${req.url.split("?")[1]}` : "");
+      const candidate = (
+        (req.headers["x-matched-path"] as string) ||
+        (req.headers["x-forwarded-url"] as string) ||
+        req.originalUrl ||
+        req.url ||
+        ""
+      ).split("?")[0];
+
+      if (candidate.startsWith("/api") && !req.url.startsWith("/api")) {
+        const queryPart = req.url.includes("?") ? `?${req.url.split("?")[1]}` : "";
+        req.url = candidate + queryPart;
       }
     }
   } catch {}
@@ -112,6 +120,10 @@ try {
 
 function saveAuthStore() {
   try {
+    // In serverless environments, file system outside /tmp is read-only
+    if (process.env.VERCEL || process.env.VERCEL_ENV || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT) {
+      return;
+    }
     const dataDir = path.join(process.cwd(), "data");
     if (fs.existsSync(dataDir)) {
       fs.writeFileSync(AUTH_STORE_PATH, JSON.stringify(authStore, null, 2), "utf-8");
@@ -1924,8 +1936,23 @@ async function startServer() {
   });
 }
 
-// Only start standalone server when not in a serverless environment (such as Vercel)
-if (!process.env.VERCEL) {
+// Only start standalone server when run directly from CLI (e.g. `tsx server.ts` or `node dist/server.cjs`),
+// NEVER when imported by a serverless function handler (e.g. Vercel) or test suite.
+const isDirectExecution = Boolean(
+  process.argv[1] &&
+  (process.argv[1].endsWith("server.ts") || process.argv[1].endsWith("server.cjs") || process.argv[1].endsWith("server.js"))
+);
+
+const isServerless = Boolean(
+  process.env.VERCEL ||
+  process.env.VERCEL_ENV ||
+  process.env.NOW_REGION ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.LAMBDA_TASK_ROOT ||
+  process.env.IS_SERVERLESS
+);
+
+if (isDirectExecution && !isServerless) {
   startServer();
 }
 
