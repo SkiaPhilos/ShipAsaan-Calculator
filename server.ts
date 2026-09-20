@@ -1956,5 +1956,6 @@ if (isDirectExecution && !isServerless) {
   startServer();
 }
 
+export const maxDuration = 60;
 export default app;
 export { app };
