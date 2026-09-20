@@ -2,6 +2,42 @@
   "users": [],
   "loginAttempts": [
     {
+      "id": "att-1789889778318-ot5g",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-20T07:36:18.318Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "curl/7.88.1"
+    },
+    {
+      "id": "att-1789889734326-vi2f",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-20T07:35:34.326Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "curl/7.88.1"
+    },
+    {
+      "id": "att-1789889731198-2ae6",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-20T07:35:31.198Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "curl/7.88.1"
+    },
+    {
+      "id": "att-1789889728618-cru4",
+      "emailOrUsername": "skylerisbusy@gmail.com",
+      "timestamp": "2026-09-20T07:35:28.618Z",
+      "status": "SUCCESS_ADMIN",
+      "details": "Administrator session authenticated via secure environment variables.",
+      "ip": "127.0.0.1",
+      "userAgent": "curl/7.88.1"
+    },
+    {
       "id": "att-1789855234180-sium",
       "emailOrUsername": "skylerisbusy@gmail.com",
       "timestamp": "2026-09-19T22:00:34.180Z",

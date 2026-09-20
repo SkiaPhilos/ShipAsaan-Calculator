@@ -128,9 +128,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     } catch (netErr: any) {
       console.error("Authentication server request failed:", netErr);
       setLoginError(
-        netErr.message && !netErr.message.includes("JSON")
-          ? netErr.message
-          : "Unable to reach the authentication server. Please verify your backend server deployment."
+        netErr?.message || "Unable to reach the authentication server. Please check network connectivity and backend deployment."
       );
     } finally {
       setIsLoggingIn(false);

@@ -17,15 +17,29 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Normalize req.url so Express routes match regardless of serverless rewrite alterations
 app.use((req, _res, next) => {
-  const orig = (req.originalUrl || (req.headers["x-matched-path"] as string) || req.url || "").split("?")[0];
-  if (orig.startsWith("/api") && !req.url.startsWith("/api")) {
-    req.url = orig + (req.url.includes("?") ? `?${req.url.split("?")[1]}` : "");
-  }
+  try {
+    const rawUrl = req.url || "/";
+    if (rawUrl.includes("__path=")) {
+      const parsed = new URL(rawUrl, "http://localhost");
+      const subPath = parsed.searchParams.get("__path");
+      if (subPath) {
+        parsed.searchParams.delete("__path");
+        const cleanSub = subPath.replace(/^\/+/, "");
+        const qs = parsed.searchParams.toString();
+        req.url = `/api/${cleanSub}${qs ? `?${qs}` : ""}`;
+      }
+    } else {
+      const orig = (req.originalUrl || (req.headers["x-matched-path"] as string) || req.url || "").split("?")[0];
+      if (orig.startsWith("/api") && !req.url.startsWith("/api")) {
+        req.url = orig + (req.url.includes("?") ? `?${req.url.split("?")[1]}` : "");
+      }
+    }
+  } catch {}
   next();
 });
 
 // Health check endpoint for desktop packaging and diagnostics
-app.get("/api/health", (_req, res) => {
+app.get(["/api/health", "/health"], (_req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
@@ -175,7 +189,7 @@ async function sendAdminNotificationEmail(
 }
 
 // 1. User Login Route
-app.post("/api/auth/login", async (req, res) => {
+app.post(["/api/auth/login", "/auth/login"], async (req, res) => {
   try {
     const { emailOrUsername, password } = req.body || {};
     const inputId = (emailOrUsername || "").trim().toLowerCase();
@@ -367,7 +381,7 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // 2. User Signup Route
-app.post("/api/auth/signup", async (req, res) => {
+app.post(["/api/auth/signup", "/auth/signup"], async (req, res) => {
   try {
     const { fullName, email, username, password, department, role } = req.body || {};
 
@@ -475,7 +489,7 @@ app.post("/api/auth/signup", async (req, res) => {
 });
 
 // 3. Admin: Get all users & summary
-app.get("/api/admin/users", (_req, res) => {
+app.get(["/api/admin/users", "/admin/users"], (_req, res) => {
   const sanitizedUsers = authStore.users.map(({ password: _, ...u }) => u);
   const pendingCount = sanitizedUsers.filter((u) => u.status === "pending_approval").length;
   const activeCount = sanitizedUsers.filter((u) => u.status === "active").length;
@@ -490,7 +504,7 @@ app.get("/api/admin/users", (_req, res) => {
 });
 
 // 4. Admin: Approve or Reject a user
-app.post("/api/admin/approve-user", async (req, res) => {
+app.post(["/api/admin/approve-user", "/admin/approve-user"], async (req, res) => {
   try {
     const { userId, approved } = req.body || {};
     if (!userId) {
@@ -532,7 +546,7 @@ app.post("/api/admin/approve-user", async (req, res) => {
 });
 
 // 5. Admin: Delete User
-app.post("/api/admin/delete-user", (req, res) => {
+app.post(["/api/admin/delete-user", "/admin/delete-user"], (req, res) => {
   const { userId } = req.body || {};
   if (!userId) {
     return res.status(400).json({ ok: false, error: "userId is required." });
@@ -543,7 +557,7 @@ app.post("/api/admin/delete-user", (req, res) => {
 });
 
 // 6. Admin: Get Login Attempts
-app.get("/api/admin/login-attempts", (_req, res) => {
+app.get(["/api/admin/login-attempts", "/admin/login-attempts"], (_req, res) => {
   res.json({
     ok: true,
     attempts: authStore.loginAttempts.slice(0, 100),
@@ -551,7 +565,7 @@ app.get("/api/admin/login-attempts", (_req, res) => {
 });
 
 // 7. Admin: Get Email Notifications Log
-app.get("/api/admin/notifications", (_req, res) => {
+app.get(["/api/admin/notifications", "/admin/notifications"], (_req, res) => {
   res.json({
     ok: true,
     notifications: authStore.notifications.slice(0, 50),
@@ -560,7 +574,7 @@ app.get("/api/admin/notifications", (_req, res) => {
 });
 
 // 8. Admin: Mark Notification Read
-app.post("/api/admin/notifications/mark-read", (req, res) => {
+app.post(["/api/admin/notifications/mark-read", "/admin/notifications/mark-read"], (req, res) => {
   const { id } = req.body || {};
   if (id) {
     const notif = authStore.notifications.find((n) => n.id === id);
@@ -573,7 +587,7 @@ app.post("/api/admin/notifications/mark-read", (req, res) => {
 });
 
 // 9. Admin: Clear Security Logs
-app.post("/api/admin/clear-logs", (_req, res) => {
+app.post(["/api/admin/clear-logs", "/admin/clear-logs"], (_req, res) => {
   authStore.loginAttempts = [];
   saveAuthStore();
   res.json({ ok: true, message: "Login attempts audit cleared." });
@@ -770,7 +784,7 @@ function normalizeAIModel(provider: string, rawModel?: string): string {
 // ==========================================
 // 1. AI Connection Test Endpoint
 // ==========================================
-app.post("/api/ai/test-connection", async (req, res) => {
+app.post(["/api/ai/test-connection", "/ai/test-connection"], async (req, res) => {
   try {
     const body = req.body?.providerConfig || req.body || {};
     const provider = body.provider || "gemini";
@@ -1060,7 +1074,7 @@ app.post("/api/ai/test-connection", async (req, res) => {
 // ==========================================
 // 2. AI Tariff Extraction Endpoint
 // ==========================================
-app.post("/api/ai/extract-tariff", async (req, res) => {
+app.post(["/api/ai/extract-tariff", "/ai/extract-tariff"], async (req, res) => {
   try {
     const {
       workspace, // 'domestic' | 'international'
@@ -1703,7 +1717,7 @@ Return ONLY valid, parseable JSON. Do NOT include markdown code blocks or backti
 // ==========================================
 // 3. AI Copilot Natural Language Engine
 // ==========================================
-app.post("/api/ai/copilot", async (req, res) => {
+app.post(["/api/ai/copilot", "/ai/copilot"], async (req, res) => {
   try {
     const { query, workspace, contextData, providerConfig, history } = req.body;
     const provider = providerConfig?.provider || "gemini";
@@ -1864,6 +1878,14 @@ ${JSON.stringify(contextData || {}, null, 2)}
       error: err.message || "Failed to process copilot query"
     });
   }
+});
+
+// Fallback for unhandled API routes (ensures JSON response instead of HTML 404)
+app.use(["/api", "/api/*"], (req, res) => {
+  res.status(404).json({
+    ok: false,
+    error: `Endpoint not found: ${req.method} ${req.originalUrl || req.url}`,
+  });
 });
 
 // ==========================================
