@@ -169,32 +169,34 @@ export const RateMatrixView: React.FC<RateMatrixViewProps> = ({
         </div>
 
         {/* Region Filter Chips */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-[11px] font-semibold text-stone-400 flex items-center gap-1 mr-1">
-            <Filter className="w-3 h-3" /> Filter:
-          </span>
-          {[
-            { id: "all", label: `All (${matrix.columns?.length || 0})` },
-            { id: "americas", label: "Americas" },
-            { id: "europe", label: "Europe" },
-            { id: "gcc", label: "Middle East" },
-            { id: "asia", label: "Asia Pacific" },
-            { id: "zones", label: "Grouped Zones" },
-          ].map((cat) => (
-            <button
-              key={cat.id}
-              type="button"
-              onClick={() => setActiveCategory(cat.id)}
-              className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-all ${
-                activeCategory === cat.id
-                  ? "bg-purple-900 text-white font-bold"
-                  : "bg-stone-100 text-stone-600 hover:bg-stone-200"
-              }`}
-            >
-              {cat.label}
-            </button>
-          ))}
-        </div>
+        {matrix.columns?.some((c) => c.countries && c.countries.length > 0 && c.countries[0] !== c.key) && (
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-[11px] font-semibold text-stone-400 flex items-center gap-1 mr-1">
+              <Filter className="w-3 h-3" /> Filter:
+            </span>
+            {[
+              { id: "all", label: `All (${matrix.columns?.length || 0})` },
+              { id: "americas", label: "Americas" },
+              { id: "europe", label: "Europe" },
+              { id: "gcc", label: "Middle East" },
+              { id: "asia", label: "Asia Pacific" },
+              { id: "zones", label: "Grouped Zones" },
+            ].map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setActiveCategory(cat.id)}
+                className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-all ${
+                  activeCategory === cat.id
+                    ? "bg-purple-900 text-white font-bold"
+                    : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 2D Interactive Grid */}

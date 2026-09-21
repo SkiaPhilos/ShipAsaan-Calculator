@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { RateMatrixData, RateMatrixColumn, RateMatrixRow, RateMatrixExcessTier, InternationalRateTier } from "../types";
+import { RateMatrixData, RateMatrixColumn, RateMatrixRow, RateMatrixExcessTier, InternationalRateTier, DomesticRateTier } from "../types";
 
 export interface MatrixParseResult {
   success: boolean;
@@ -567,5 +567,82 @@ export function parseInternationalMatrix(
     maxFlatWeightKg: maxFlatWeightKg > 0 ? maxFlatWeightKg : undefined,
     detectedZones: matrixColumns.map((c) => c.key),
     notes,
+  };
+}
+
+/**
+ * Constructs a complete 2D RateMatrixData structure from DomesticRateTier[]
+ * so that domestic tariffs can also be viewed, inspected, and edited in the 2D matrix viewer.
+ */
+export function buildDomesticRateMatrix(
+  rates: DomesticRateTier[],
+  serviceName: string = "Domestic Overnight Express"
+): RateMatrixData {
+  if (!rates || rates.length === 0) {
+    return {
+      columns: [],
+      rows: [],
+      unit: "kg",
+      service: serviceName,
+    };
+  }
+
+  // Generate destination columns
+  const columns: RateMatrixColumn[] = rates.map((r) => ({
+    key: r.destination,
+    label: r.destination,
+    countries: [r.destination],
+  }));
+
+  // Standard domestic weight tiers: 0.5kg, 1.0kg, 2.0kg, 3.0kg, 4.0kg, 5.0kg, 10.0kg, 15.0kg, 20.0kg, 25.0kg, 30.0kg, 35.0kg
+  const weightBrackets = [
+    { from: 0.01, to: 0.5, label: "0.01 – 0.5 kg" },
+    { from: 0.51, to: 1.0, label: "0.51 – 1.0 kg" },
+    { from: 1.01, to: 2.0, label: "1.01 – 2.0 kg" },
+    { from: 2.01, to: 3.0, label: "2.01 – 3.0 kg" },
+    { from: 3.01, to: 4.0, label: "3.01 – 4.0 kg" },
+    { from: 4.01, to: 5.0, label: "4.01 – 5.0 kg" },
+    { from: 5.01, to: 10.0, label: "5.01 – 10.0 kg" },
+    { from: 10.01, to: 15.0, label: "10.01 – 15.0 kg" },
+    { from: 15.01, to: 20.0, label: "15.01 – 20.0 kg" },
+    { from: 20.01, to: 25.0, label: "20.01 – 25.0 kg" },
+    { from: 25.01, to: 30.0, label: "25.01 – 30.0 kg" },
+    { from: 30.01, to: 35.0, label: "30.01 – 35.0 kg" },
+  ];
+
+  const additionalKgRates: Record<string, number> = {};
+  rates.forEach((r) => {
+    additionalKgRates[r.destination] = r.additionalKgRate;
+  });
+
+  const rows: RateMatrixRow[] = weightBrackets.map((wb) => {
+    const rowRates: Record<string, number> = {};
+    rates.forEach((r) => {
+      if (wb.to <= 1.0) {
+        rowRates[r.destination] = wb.to <= 0.5 && r.additionalHalfKgRate ? r.additionalHalfKgRate : r.firstKgRate;
+      } else {
+        const addlWeight = wb.to - 1.0;
+        const total = r.firstKgRate + addlWeight * r.additionalKgRate;
+        rowRates[r.destination] = Math.round(total * 100) / 100;
+      }
+    });
+
+    return {
+      weightFrom: wb.from,
+      weightTo: wb.to,
+      weightLabel: wb.label,
+      rates: rowRates,
+      pricingType: "flat",
+    };
+  });
+
+  return {
+    columns,
+    rows,
+    additionalKgRates,
+    maxFlatWeightKg: 35,
+    unit: "kg",
+    origin: "Pakistan",
+    service: serviceName,
   };
 }

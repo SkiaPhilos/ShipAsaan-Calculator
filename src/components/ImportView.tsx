@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import {
   FileUp,
   FileSpreadsheet,
@@ -20,6 +20,10 @@ import {
   Sliders,
   Image as ImageIcon,
   Calculator,
+  Columns,
+  Eye,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import {
   WorkspaceType,
@@ -37,9 +41,10 @@ import {
 } from "../types";
 import { OfflineTariffParser, OfflineExtractionResult } from "../engine/offlineParser";
 import { RateMatrixView } from "./RateMatrixView";
-import { parseInternationalMatrix } from "../engine/matrixParser";
+import { parseInternationalMatrix, buildDomesticRateMatrix } from "../engine/matrixParser";
 import { extractTariffUniversal } from "../utils/aiClient";
 import { SAMPLE_JUMP_N_JUMP_CSV } from "../data/sampleJumpNJump";
+import { TwoDDocumentViewer } from "./TwoDDocumentViewer";
 
 interface ImportViewProps {
   activeWorkspace: WorkspaceType;
@@ -91,12 +96,38 @@ export const ImportView: React.FC<ImportViewProps> = ({
   const [intlRates, setIntlRates] = useState<InternationalRateTier[]>([]);
   const [rateMatrix, setRateMatrix] = useState<RateMatrixData | null>(null);
   const [matrixViewMode, setMatrixViewMode] = useState<"matrix" | "list">("matrix");
+  const [domesticMatrixViewMode, setDomesticMatrixViewMode] = useState<"matrix" | "list">("matrix");
+  const [reviewLayout, setReviewLayout] = useState<"split" | "matrix" | "document" | "linear">("split");
   const [inputTab, setInputTab] = useState<"file" | "paste">("file");
   const [pastedContent, setPastedContent] = useState("");
   const [surcharges, setSurcharges] = useState<SurchargeItem[]>([]);
   const [additionalData, setAdditionalData] = useState<CustomField[]>([]);
   const [ambiguities, setAmbiguities] = useState<string[]>([]);
   const [rawSnippet, setRawSnippet] = useState("");
+
+  // Computes a 2D rate matrix for domestic tariffs so domestic rate cards can be inspected & edited in the 2D viewer too!
+  const activeDomesticMatrix = useMemo<RateMatrixData | null>(() => {
+    if (!isDomestic || domRates.length === 0) return null;
+    return buildDomesticRateMatrix(domRates, serviceName || "Domestic Overnight Express");
+  }, [isDomestic, domRates, serviceName]);
+
+  const handleDomesticMatrixCellChange = (weightTo: number, colKey: string, newRate: number) => {
+    setDomRates((prev) =>
+      prev.map((r) => {
+        if (r.destination !== colKey) return r;
+        if (weightTo <= 1.0) {
+          return { ...r, firstKgRate: Math.max(0, newRate) };
+        } else {
+          const addlWeight = weightTo - 1.0;
+          const impliedAddlKg =
+            addlWeight > 0
+              ? Math.max(0, Math.round(((newRate - r.firstKgRate) / addlWeight) * 100) / 100)
+              : r.additionalKgRate;
+          return { ...r, additionalKgRate: impliedAddlKg };
+        }
+      })
+    );
+  };
 
   // Flexible Dynamic Rules & Arithmetic Transformations
   const [dynamicRules, setDynamicRules] = useState<DynamicTariffRule[]>([]);
@@ -1121,6 +1152,97 @@ Customs clearance documentation fees apply as per destination country customs au
             </div>
           )}
 
+          {/* 2D AUDITING & VERIFICATION WORKSPACE CONTROL BAR */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-gradient-to-r from-stone-950 via-stone-900 to-purple-950 text-white rounded-2xl shadow-md border border-stone-800">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-purple-800/80 text-purple-200 rounded-xl border border-purple-600/50 shadow-inner">
+                <Eye className="w-4 h-4 text-purple-200" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-black text-white tracking-wide">
+                    2D Tariff Grounding & Audit Screen
+                  </h2>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-900/90 text-purple-200 border border-purple-700 font-bold">
+                    2D VIEWER ACTIVE
+                  </span>
+                </div>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  Verify extracted rates against the original source document with complete cross-tabular precision.
+                </p>
+              </div>
+            </div>
+
+            {/* Layout View Mode Buttons */}
+            <div className="flex items-center bg-stone-950 p-1 rounded-xl border border-stone-800 text-xs">
+              <button
+                type="button"
+                onClick={() => setReviewLayout("split")}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                  reviewLayout === "split"
+                    ? "bg-purple-800 text-white shadow-xs"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+                title="Side-by-side: Source Document on Left, Extracted 2D Rate Matrix on Right"
+              >
+                <Columns className="w-3.5 h-3.5" />
+                <span>◫ 2D Split View</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReviewLayout("matrix")}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                  reviewLayout === "matrix"
+                    ? "bg-purple-800 text-white shadow-xs"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+                title="Dedicated Full-Width 2D Rate Matrix Grid"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>▦ 2D Rate Matrix</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReviewLayout("document")}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                  reviewLayout === "document"
+                    ? "bg-purple-800 text-white shadow-xs"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+                title="Dedicated Full-Width Original Document Inspector"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>📄 Source Document</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReviewLayout("linear")}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                  reviewLayout === "linear"
+                    ? "bg-purple-800 text-white shadow-xs"
+                    : "text-stone-400 hover:text-stone-200"
+                }`}
+                title="Standard Itemized List Form"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>📋 Itemized Form</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 2D SOURCE DOCUMENT VIEWER (When split view or document view is selected) */}
+          {(reviewLayout === "split" || reviewLayout === "document") && (
+            <div className="space-y-4">
+              <TwoDDocumentViewer
+                filename={selectedFile?.name || "Uploaded Tariff Document"}
+                fileContent={fileContentStr || pastedContent}
+                imagePreviewUrl={imagePreviewUrl}
+                rawSnippet={rawSnippet}
+                compact={reviewLayout === "split"}
+              />
+            </div>
+          )}
+
           {/* Editable Metadata Form */}
           <div className="bg-white border border-stone-200 rounded-2xl p-5 shadow-2xs space-y-4">
             <h2 className="text-xs font-bold uppercase tracking-wider text-stone-400">
@@ -1154,6 +1276,65 @@ Customs clearance documentation fees apply as per destination country customs au
                   value={serviceName}
                   onChange={(e) => setServiceName(e.target.value)}
                   className="w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-stone-800"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs pt-2 border-t border-stone-100">
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">Currency</label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-stone-800 font-bold"
+                >
+                  <option value="PKR">PKR (Rs)</option>
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="AED">AED (د.إ)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">Effective Date</label>
+                <input
+                  type="date"
+                  value={effectiveFrom}
+                  onChange={(e) => setEffectiveFrom(e.target.value)}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-stone-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">Fuel Surcharge (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={fuelPercentage}
+                  onChange={(e) => setFuelPercentage(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-stone-800 font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">GST / Sales Tax (%)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={gstPercentage}
+                  onChange={(e) => setGstPercentage(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-stone-800 font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">Volumetric Divisor</label>
+                <input
+                  type="number"
+                  value={volumetricDivisor}
+                  onChange={(e) => setVolumetricDivisor(parseInt(e.target.value) || 5000)}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-stone-800 font-mono font-bold"
                 />
               </div>
             </div>
@@ -1425,71 +1606,123 @@ Customs clearance documentation fees apply as per destination country customs au
             </div>
 
             {isDomestic ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border border-stone-200 rounded-lg overflow-hidden">
-                  <thead className="bg-stone-100 font-bold text-stone-700">
-                    <tr>
-                      <th className="p-2.5">Sector Destination</th>
-                      <th className="p-2.5 text-right">First 1 KG (PKR)</th>
-                      <th className="p-2.5 text-right">Addl 1 KG (PKR)</th>
-                      <th className="p-2.5">Transit</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-200">
-                    {domRates.map((r, idx) => (
-                      <tr key={r.id}>
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            value={r.destination}
-                            onChange={(e) => {
-                              const updated = [...domRates];
-                              updated[idx].destination = e.target.value;
-                              setDomRates(updated);
-                            }}
-                            className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-full"
-                          />
-                        </td>
-                        <td className="p-2 text-right">
-                          <input
-                            type="number"
-                            value={r.firstKgRate}
-                            onChange={(e) => {
-                              const updated = [...domRates];
-                              updated[idx].firstKgRate = parseFloat(e.target.value) || 0;
-                              setDomRates(updated);
-                            }}
-                            className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-28 text-right font-mono"
-                          />
-                        </td>
-                        <td className="p-2 text-right">
-                          <input
-                            type="number"
-                            value={r.additionalKgRate}
-                            onChange={(e) => {
-                              const updated = [...domRates];
-                              updated[idx].additionalKgRate = parseFloat(e.target.value) || 0;
-                              setDomRates(updated);
-                            }}
-                            className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-28 text-right font-mono"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            value={r.expectedTransitDays || "1-2 Days"}
-                            onChange={(e) => {
-                              const updated = [...domRates];
-                              updated[idx].expectedTransitDays = e.target.value;
-                              setDomRates(updated);
-                            }}
-                            className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-28"
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-4">
+                {activeDomesticMatrix && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 bg-purple-50/60 border border-purple-200 rounded-xl">
+                    <div className="flex items-center gap-2">
+                      <FileSpreadsheet className="w-4 h-4 text-purple-900" />
+                      <span className="text-xs font-bold text-stone-800">
+                        2D Domestic Rate Matrix:
+                      </span>
+                      <span className="text-[11px] text-stone-500">
+                        {activeDomesticMatrix.columns.length} destination sectors × {activeDomesticMatrix.rows.length} weight tiers
+                      </span>
+                    </div>
+
+                    <div className="flex items-center bg-white p-0.5 rounded-lg border border-purple-200 text-xs shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setDomesticMatrixViewMode("matrix")}
+                        className={`px-3 py-1 rounded-md font-bold transition-all flex items-center gap-1.5 ${
+                          domesticMatrixViewMode === "matrix"
+                            ? "bg-purple-900 text-white shadow-xs"
+                            : "text-stone-600 hover:text-stone-900"
+                        }`}
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                        <span>📊 2D Matrix Grid</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDomesticMatrixViewMode("list")}
+                        className={`px-3 py-1 rounded-md font-bold transition-all flex items-center gap-1.5 ${
+                          domesticMatrixViewMode === "list"
+                            ? "bg-purple-900 text-white shadow-xs"
+                            : "text-stone-600 hover:text-stone-900"
+                        }`}
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>📋 Sector List ({domRates.length})</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {domesticMatrixViewMode === "matrix" && activeDomesticMatrix ? (
+                  <RateMatrixView
+                    matrix={activeDomesticMatrix}
+                    editable={true}
+                    currency="PKR"
+                    onCellChange={handleDomesticMatrixCellChange}
+                  />
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border border-stone-200 rounded-lg overflow-hidden">
+                      <thead className="bg-stone-100 font-bold text-stone-700">
+                        <tr>
+                          <th className="p-2.5">Sector Destination</th>
+                          <th className="p-2.5 text-right">First 1 KG (PKR)</th>
+                          <th className="p-2.5 text-right">Addl 1 KG (PKR)</th>
+                          <th className="p-2.5">Transit</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-200">
+                        {domRates.map((r, idx) => (
+                          <tr key={r.id}>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={r.destination}
+                                onChange={(e) => {
+                                  const updated = [...domRates];
+                                  updated[idx].destination = e.target.value;
+                                  setDomRates(updated);
+                                }}
+                                className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-full"
+                              />
+                            </td>
+                            <td className="p-2 text-right">
+                              <input
+                                type="number"
+                                value={r.firstKgRate}
+                                onChange={(e) => {
+                                  const updated = [...domRates];
+                                  updated[idx].firstKgRate = parseFloat(e.target.value) || 0;
+                                  setDomRates(updated);
+                                }}
+                                className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-28 text-right font-mono"
+                              />
+                            </td>
+                            <td className="p-2 text-right">
+                              <input
+                                type="number"
+                                value={r.additionalKgRate}
+                                onChange={(e) => {
+                                  const updated = [...domRates];
+                                  updated[idx].additionalKgRate = parseFloat(e.target.value) || 0;
+                                  setDomRates(updated);
+                                }}
+                                className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-28 text-right font-mono"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={r.expectedTransitDays || "1-2 Days"}
+                                onChange={(e) => {
+                                  const updated = [...domRates];
+                                  updated[idx].expectedTransitDays = e.target.value;
+                                  setDomRates(updated);
+                                }}
+                                className="bg-stone-50 border border-stone-300 rounded px-2 py-1 text-xs w-28"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             ) : (
               /* INTERNATIONAL: 2D Matrix Grid or Linear List */

@@ -1182,35 +1182,54 @@ app.post(["/api/ai/extract-tariff", "/ai/extract-tariff"], async (req, res) => {
       }
     }
 
-    const systemPrompt = `You are the Tariff Intelligence & Rate Normalization Engine for Ship Asaan Logistics.
+    const systemPrompt = `You are the Chief Logistics Tariff Intelligence & 2D Rate Normalization Engine for Ship Asaan Logistics.
+Your task is to extract, audit, and normalize courier rate cards and freight tariffs with 100% FACTUAL GROUNDING and ZERO HALLUCINATION.
 
-CRITICAL ARCHITECTURAL DIRECTIVES:
-1. NON-DESTRUCTIVE FLEXIBILITY:
-   - Never eradicate, omit, or discard clauses, pricing rules, or fields merely because they do not fit traditional tabular molds.
-   - If a courier rate card introduces custom rules (e.g. Return to Origin / RTO penalties, fragile packaging fees, holiday delivery surcharges, remote pin-code levies, dimensional restrictions, provincial GST variations), you MUST create a dynamic rule in "dynamicRules" and capture details in "additionalData".
-   
-2. ARITHMETIC NORMALIZATION:
-   - When tariffs provide rates in non-standard weight increments (such as 2 KG increments, 500g / 0.5 KG increments, 5 KG tiers, or piece rates), convert them to standardized 1 KG equivalents so standard calculation engines can operate seamlessly.
-   - Example 1: If a tariff lists "Additional 2 KG = Rs. 300", normalize to "additionalKgRate": 150 (since 300 / 2 = 150).
-   - Example 2: If a tariff lists "Additional 0.5 KG = Rs. 80", normalize to "additionalKgRate": 160 (since 80 * 2 = 160), and set "additionalHalfKgRate": 80.
-   - Always record every arithmetic transformation and normalization rationale in "transformationsApplied".
+WORKSPACE CONTEXT: ${workspace === "domestic" ? "DOMESTIC Pakistan COD/Courier Logistics (TCS, Leopards, Trax, PostEx, M&P, Call Courier)" : "INTERNATIONAL Freight & Express (Jump N Jump, DHL, FedEx, UPS, Skynet, Aramex)"}
 
-3. MATRIX RATE CARDS (INTERNATIONAL & MULTI-ZONE TARIFFS - E.G. JUMP N JUMP, DHL, FEDEX, SKYNET):
-   - Many rate sheets display a 2D matrix where:
-     * Vertical rows are Weights (e.g. 0.5kg, 1.0kg, 1.5kg, 2.0kg ... up to 10kg, 20kg, 30kg, 50kg, 70kg).
-     * Horizontal column headers are Destination Zones or Country Codes (e.g. "CA", "AU", "NL", "DE", "Zone 1", "Zone 2", etc.).
-     * Arrows (such as "-->" or "==>") point from Weight/Zones across columns to indicate the zone columns.
-   - CRITICAL REQUIREMENT FOR COMPLETENESS:
-     * YOU MUST EXTRACT EVERY SINGLE ROW IN THE TABLE. NEVER TRUNCATE, NEVER STOP EARLY AFTER 2-3 WEIGHTS, AND DO NOT OMIT ROWS!
-     * If the table lists weights up to 10kg, 20kg, 30kg, or 70kg, extract all of them!
-     * Use the compact "rateMatrix" structure below so all rows fit comfortably within output tokens without truncation.
-     * In addition to "rateMatrix", unpivot the cells into "normalizedData.rates".
+================================================================================
+STRICT FACTUAL GROUNDING PRINCIPLES (MANDATORY & ZERO-HALLUCINATION):
+================================================================================
+1. STRICT ZERO-HALLUCINATION / GROUNDED TRUTH:
+   - Extract ONLY numbers, rates, surcharges, currency codes, zones, and rules that are explicitly stated in the provided document, table, or scan.
+   - NEVER fabricate, invent, guess, or extrapolate courier partner names, base rates, per-kg rates, GST percentages, or fuel surcharges.
+   - If a surcharge, tax rate, or specific zone rate is absent in the document, omit it or set to null. Note any missing or ambiguous values in "ambiguities".
+   - If text is faint, ambiguous, or has conflicting terms, quote the raw text verbatim in "ambiguities" rather than guessing.
 
-4. ACCURACY & TRUTHFULNESS:
-   - Do not manufacture random numbers. If something is truly absent or unclear, record it in "ambiguities".
-   - Always preserve original labels and raw clauses in "rawExtraction".
+2. EXHAUSTIVE 2D MATRIX TABLE EXTRACTION:
+   - Many courier rate sheets (e.g. Jump N Jump, DHL, FedEx, Skynet, Aramex) are 2D cross-tabular matrices where:
+     * Vertical rows represent Weight increments/slabs (e.g. 0.5kg, 1.0kg, 1.5kg, 2.0kg ... up to 70kg, and cargo brackets).
+     * Horizontal column headers represent Destination Zones, Countries, or Cities (e.g. "CA", "US", "UK", "NL", "AU", "Zone 1", "Zone 2", etc.).
+   - YOU MUST EXTRACT EVERY SINGLE ROW AND EVERY SINGLE COLUMN without stopping early or truncating.
+   - Populate "rateMatrix.columns" with all unique destination columns (key, label, countries).
+   - Populate "rateMatrix.rows" with all weight tiers (weightFrom, weightTo, weightLabel, pricingType, and a "rates" dictionary mapping column key -> exact numerical rate).
+   - In addition to "rateMatrix", unpivot the cells into "normalizedData.rates".
 
-WORKSPACE CONTEXT: ${workspace === "domestic" ? "DOMESTIC / COD Logistics (Pakistan - e.g. TCS, Leopards, Trax, PostEx, M&P)" : "INTERNATIONAL Express & Freight (Global - e.g. Jump N Jump, DHL, FedEx, UPS, Aramex, Skynet)"}
+3. PRICING CLASSIFICATION (FLAT vs PER-KG):
+   - Standard package weight slabs (<= 70 kg) have pricingType: "flat". Single-kg ranges like 0.5-1kg, 9.01-10kg, 69-70kg are ALWAYS FLAT parcel prices.
+   - Broad excess cargo brackets (e.g. 70.01-99kg, 71-500kg, 99.01-1000kg) have pricingType: "per_kg" (unit price per kilogram).
+
+4. DOMESTIC SECTOR EXTRACTION:
+   - Base/First KG Rate (for the first 0.5kg or 1.0kg).
+   - Additional KG Rate (for each subsequent kilogram).
+   - Distinguish sectors: Within City (Intra-city), Same Province (Intra-province), Different Province (Inter-province/Metro), Remote / Extended Area, or individual city names.
+
+5. ACCURATE SURCHARGES & REGULATORY LEVIES:
+   - Fuel Surcharge (FSC / FAC): extract exact percentage or flat rate, and whether it applies to base freight or total invoice.
+   - Cash On Delivery (COD): extract COD commission percentage (e.g. 3%), minimum COD fee (e.g. PKR 50), and payment reimbursement cycle.
+   - Sales Tax / GST: extract provincial sales tax rates (e.g. PRA 16%, SRB 19.5%, BRA 15%, KPK 15%) or standard GST.
+   - Volumetric Divisor: extract exact dimensional factor (e.g. L×W×H / 5000 or 6000 cm³/kg).
+
+6. ARITHMETIC NORMALIZATION:
+   - When tariffs quote rates in non-standard increments (e.g. 2kg increments or 500g increments), convert them to standardized 1.0kg equivalents so rating engines can compute prices smoothly.
+   - Always log every arithmetic adjustment in "transformationsApplied" (e.g., original: "Rs 380 per 2kg additional", normalized: "Rs 190 per 1kg additional", reasoning: "Normalized 2kg tier to 1kg standard base").
+
+7. OPERATIONAL CLAUSES & DYNAMIC RULES:
+   - Capture critical contract clauses in "dynamicRules":
+     * Return to Origin (RTO) charges (e.g. 50% or 100% of freight).
+     * Fragile crating or wooden box surcharge.
+     * Remote Area Pin Code Delivery surcharge.
+     * Maximum parcel weight or dimensional limits.
 
 You must extract and normalize the courier tariff into a structured JSON response matching this schema:
 {
@@ -1299,9 +1318,10 @@ You must extract and normalize the courier tariff into a structured JSON respons
     const userTextPrompt = `Document Filename: ${filename || "Uploaded Tariff Document"}
 File Type: ${fileType || (isDataUrl ? mimeType : "text/spreadsheet")}
 Partner Hint: ${partnerHint || "Unspecified"}
-${spreadsheetTextRepresentation ? `\nPRE-PARSED SPREADSHEET CONTENT:\n"""\n${spreadsheetTextRepresentation.slice(0, 150000)}\n"""\n` : (!isDataUrl ? `\nDocument Text Content:\n"""\n${(fileContent || "").slice(0, 100000)}\n"""\n` : "Please inspect the attached tariff image / document visually.")}
+${spreadsheetTextRepresentation ? `\nPRE-PARSED 2D SPREADSHEET CONTENT:\n"""\n${spreadsheetTextRepresentation.slice(0, 150000)}\n"""\n` : (!isDataUrl ? `\nDocument Text Content:\n"""\n${(fileContent || "").slice(0, 100000)}\n"""\n` : "Please inspect the attached 2D tariff image / document scan visually with high OCR precision.")}
 
 Carefully extract, normalize (e.g. convert 2kg or 0.5kg increments to 1kg equivalents and record in transformationsApplied), and provision any dynamicRules for custom conditions.
+STRICT FACTUAL GROUNDING: Extract ONLY numbers and rates present in the document. Do not invent or assume data.
 FOR RATE MATRICES: Make sure to extract ALL weight tiers (do NOT cut off after 2 or 3 weights) and ALL zone/country columns into "rateMatrix" and "normalizedData.rates".
 PRICING CLASSIFICATION (FLAT vs PER-KG):
 - Every standard package weight slab (e.g. 0.01-0.5, 0.5-1.0... up to 10kg, and 1kg increments like 10-11, 11-12... up to 69-70kg) has pricingType: "flat". Single-kg ranges like 69-70kg are ALWAYS FLAT parcel prices.

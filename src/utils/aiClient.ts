@@ -521,39 +521,146 @@ export async function extractTariffUniversal(params: {
   const rawModel = config?.model === "custom" ? config?.customModel : config?.model;
   const targetModel = normalizeAIModel(provider, rawModel);
 
-  const prompt = `You are the Tariff Intelligence & Rate Normalization Engine for Ship Asaan Logistics.
-WORKSPACE: ${params.workspace.toUpperCase()}
-FILENAME: ${params.filename}
-PARTNER HINT: ${params.partnerHint || "Unknown"}
+  const prompt = `You are the Chief Logistics Tariff Intelligence & 2D Rate Normalization Engine for Ship Asaan Logistics.
+WORKSPACE CONTEXT: ${params.workspace.toUpperCase()} (${params.workspace === "domestic" ? "DOMESTIC Pakistan COD/Courier - TCS, Leopards, Trax, PostEx, M&P" : "INTERNATIONAL Freight & Express - Jump N Jump, DHL, FedEx, UPS, Skynet, Aramex"})
+DOCUMENT FILENAME: ${params.filename}
+PARTNER HINT: ${params.partnerHint || "Unknown / Not Specified"}
 
-Analyze this courier rate card / tariff text and normalize it into a clean JSON structure:
+================================================================================
+STRICT FACTUAL GROUNDING PRINCIPLES (MANDATORY & ZERO-HALLUCINATION):
+================================================================================
+1. STRICT ZERO-HALLUCINATION / FACTUAL GROUNDING:
+   - Extract ONLY numbers, rates, surcharges, currency codes, zones, and rules that are explicitly stated in the provided document or text.
+   - NEVER fabricate, invent, guess, or extrapolate courier partner names, base rates, per-kg rates, GST percentages, or fuel surcharges.
+   - If a surcharge, tax rate, or specific zone rate is absent, omit it or set to null. Note any missing or ambiguous values in "ambiguities".
+   - If text is ambiguous or contains conflicting terms, quote the raw text verbatim in "ambiguities" rather than guessing.
+
+2. EXHAUSTIVE 2D MATRIX TABLE EXTRACTION:
+   - Many courier rate cards are 2D cross-tabular matrices where:
+     * Vertical rows represent Weight increments/slabs (e.g. 0.5kg, 1.0kg, 1.5kg, 2.0kg ... up to 70kg, and cargo brackets).
+     * Horizontal column headers represent Destination Zones, Countries, or Cities (e.g. "Zone 1", "Zone 2", "CA", "US", "UK", "NL", "AU", "Karachi", "Lahore", "Same Province", etc.).
+   - YOU MUST EXTRACT EVERY SINGLE ROW AND EVERY SINGLE COLUMN without stopping early or truncating rows.
+   - Populate "rateMatrix.columns" with all unique destination columns (key, label, countries).
+   - Populate "rateMatrix.rows" with all weight tiers (weightFrom, weightTo, weightLabel, pricingType, and a "rates" dictionary mapping column key -> exact numerical rate).
+   - Also unpivot into "normalizedData.rates" for engine compatibility.
+
+3. PRICING CLASSIFICATION (FLAT vs PER-KG):
+   - Package Slabs (<= 70 kg): classify with pricingType: "flat". For example, a row for 0.5kg-1kg or 9.01-10kg is a flat parcel price.
+   - Broad Heavy Cargo Brackets (e.g. 70.01-99kg, 100-300kg, 301-500kg): classify with pricingType: "per_kg" (unit cost per kilogram).
+
+4. DOMESTIC RATE STRUCTURE:
+   - Base/First KG Rate (for the first 0.5kg or 1.0kg).
+   - Additional KG Rate (for each subsequent kilogram).
+   - Distinguish sectors: Within City (Intra-city), Same Province (Intra-province), Different Province (Inter-province/Metro), and Remote / Extended Areas.
+
+5. ACCURATE SURCHARGES & REGULATORY LEVIES:
+   - Fuel Surcharge (FSC / FAC): extract exact percentage or flat rate, and whether it applies to base freight or total invoice.
+   - Cash On Delivery (COD): extract COD commission percentage (e.g. 3%), minimum COD fee (e.g. PKR 50), and payment disbursement cycle.
+   - Sales Tax / GST: extract provincial sales tax rates (e.g. PRA 16%, SRB 19.5%, BRA 15%, KPK 15%) or standard GST.
+   - Volumetric Divisor: extract exact dimensional factor (e.g. L×W×H / 5000 or 6000 cm³/kg).
+
+6. ARITHMETIC NORMALIZATION:
+   - If rates are quoted in non-standard increments (e.g. 2kg increments or 500g increments), convert them to standardized 1.0kg equivalents so rating engines can calculate prices smoothly.
+   - Always log every arithmetic adjustment in "transformationsApplied" (e.g., original: "Rs 380 per 2kg additional", normalized: "Rs 190 per 1kg additional", reasoning: "Normalized 2kg tier to 1kg standard base").
+
+7. OPERATIONAL CLAUSES & DYNAMIC RULES:
+   - Capture critical contract clauses in "dynamicRules":
+     * Return to Origin (RTO) charges (e.g. 50% or 100% of freight).
+     * Fragile crating or wooden box surcharge.
+     * Remote Area Pin Code Delivery surcharge.
+     * Maximum parcel weight or dimensional limits.
+
+DOCUMENT CONTENT / OCR TEXT:
+"""
 ${params.fileContent.slice(0, 100000)}
+"""
 
 Return ONLY valid JSON matching this schema:
 {
   "tariffName": "string",
   "partnerName": "string",
   "serviceType": "string",
-  "currency": "PKR or USD",
+  "currency": "PKR or USD or EUR",
   "effectiveFrom": "YYYY-MM-DD or empty",
   "effectiveUntil": "YYYY-MM-DD or empty",
   "confidence": 95,
-  "ambiguities": [],
-  "transformationsApplied": [],
-  "dynamicRules": [],
+  "ambiguities": ["string"],
+  "transformationsApplied": [
+    {
+      "id": "trans-1",
+      "originalFormat": "string",
+      "normalizedFormat": "string",
+      "reasoning": "string"
+    }
+  ],
+  "dynamicRules": [
+    {
+      "id": "dyn-1",
+      "ruleKey": "string",
+      "title": "string",
+      "category": "weight_increment",
+      "condition": "string",
+      "formulaOrValue": "string",
+      "description": "string",
+      "sourceText": "string",
+      "enabled": true
+    }
+  ],
   "rateMatrix": {
-    "columns": [],
-    "rows": []
+    "columns": [
+      { "key": "CA", "label": "Canada", "countries": ["Canada"] }
+    ],
+    "rows": [
+      {
+        "weightFrom": 0.01,
+        "weightTo": 0.5,
+        "weightLabel": "0.01 – 0.5 kg",
+        "pricingType": "flat",
+        "rates": { "CA": 2500 }
+      }
+    ],
+    "additionalKgRates": { "CA": 350 },
+    "unit": "kg"
   },
   "normalizedData": {
-    "baseRate": 0,
-    "additionalKgRate": 0,
-    "fuelSurchargePct": 0,
-    "gstPct": 0,
-    "rates": [],
-    "surcharges": []
+    "pricingStructure": "matrix_zone_weight",
+    "baseRate": 260,
+    "additionalKgRate": 150,
+    "fuelSurchargePct": 18.5,
+    "gstPct": 16.0,
+    "volumetricDivisor": 5000,
+    "rates": [
+      {
+        "origin": "Karachi",
+        "destination": "Lahore",
+        "firstKgRate": 380,
+        "additionalKgRate": 190,
+        "weightFrom": 0,
+        "weightTo": 1,
+        "pricingType": "flat"
+      }
+    ],
+    "surcharges": [
+      {
+        "name": "Fuel Surcharge",
+        "originalName": "FSC",
+        "type": "percentage",
+        "value": 18.5,
+        "applicability": "base_rate"
+      }
+    ],
+    "codTerms": {
+      "percentage": 3.0,
+      "fixedMinimum": 50
+    }
   },
-  "rawExtraction": {}
+  "rawExtraction": {
+    "extractedTextSnippet": "string",
+    "detectedHeaders": ["string"],
+    "originalClauses": ["string"]
+  },
+  "additionalData": [],
+  "extractionNotes": "string"
 }`;
 
   try {
